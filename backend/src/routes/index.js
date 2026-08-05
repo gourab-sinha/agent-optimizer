@@ -2,6 +2,7 @@ import express from 'express';
 import locationRoutes from './locationRoutes.js';
 import agentRoutes from './agentRoutes.js';
 import callRoutes from './callRoutes.js';
+import oauthRoutes from './oauthRoutes.js';
 
 const router = express.Router();
 
@@ -10,10 +11,14 @@ const router = express.Router();
  * All routes are prefixed with /api
  *
  * Routes:
+ * - *      /api/oauth/*
  * - *      /api/locations/*
  * - *      /api/agents/*
  * - *      /api/calls/*
  */
+
+// OAuth routes
+router.use('/oauth', oauthRoutes);
 
 // Entity routes
 router.use('/locations', locationRoutes);
