@@ -1,5 +1,8 @@
-require('dotenv').config();
-const { Pool } = require('pg');
+import dotenv from 'dotenv';
+import pkg from 'pg';
+const { Pool } = pkg;
+
+dotenv.config();
 
 /**
  * PostgreSQL connection pool
@@ -69,6 +72,29 @@ async function getClient() {
 }
 
 /**
+ * Health check - test database connectivity
+ * @returns {Promise<boolean>} True if database is healthy
+ */
+async function healthCheck() {
+  try {
+    const result = await pool.query('SELECT NOW() as now');
+    return {
+      healthy: true,
+      timestamp: result.rows[0].now,
+      poolSize: pool.totalCount,
+      idleConnections: pool.idleCount,
+      waitingClients: pool.waitingCount
+    };
+  } catch (error) {
+    console.error('Database health check failed:', error.message);
+    return {
+      healthy: false,
+      error: error.message
+    };
+  }
+}
+
+/**
  * Close the connection pool
  */
 async function close() {
@@ -76,9 +102,10 @@ async function close() {
   console.log('Database pool closed');
 }
 
-module.exports = {
+export default {
   query,
   getClient,
+  healthCheck,
   close,
   pool
 };

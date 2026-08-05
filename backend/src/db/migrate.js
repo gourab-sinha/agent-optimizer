@@ -1,7 +1,14 @@
-require('dotenv').config();
-const { Client } = require('pg');
-const fs = require('fs');
-const path = require('path');
+import dotenv from 'dotenv';
+import pkg from 'pg';
+const { Client } = pkg;
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+dotenv.config();
 
 /**
  * Database migration script for agent-optimizer
@@ -61,7 +68,7 @@ async function migrate() {
 }
 
 // Run migration if called directly
-if (require.main === module) {
+if (import.meta.url === `file://${process.argv[1]}`) {
   migrate()
     .then(() => process.exit(0))
     .catch(error => {
@@ -70,4 +77,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { migrate };
+export { migrate };

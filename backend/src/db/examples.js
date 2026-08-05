@@ -1,6 +1,8 @@
-require('dotenv').config();
-const queries = require('./queries');
-const db = require('./connection');
+import dotenv from 'dotenv';
+import queries from './queries.js';
+import db from './connection.js';
+
+dotenv.config();
 
 /**
  * CRUD Operation Examples
@@ -219,7 +221,7 @@ async function runExamples() {
 }
 
 // Run examples if called directly
-if (require.main === module) {
+if (import.meta.url === `file://${process.argv[1]}`) {
   runExamples()
     .then(() => process.exit(0))
     .catch(error => {
@@ -228,4 +230,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { runExamples };
+export { runExamples };

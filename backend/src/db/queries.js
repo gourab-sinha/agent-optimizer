@@ -1,4 +1,4 @@
-const db = require('./connection');
+import db from './connection.js';
 
 /**
  * CRUD Operations for Agent Optimizer Database
@@ -417,7 +417,7 @@ async function list(table, options = {}) {
   return result.rows;
 }
 
-module.exports = {
+export default {
   // Locations
   createLocation,
   getLocationById,
