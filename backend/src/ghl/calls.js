@@ -18,7 +18,7 @@ export async function listCalls(locationId, options = {}) {
   try {
     const {
       page = 1,
-      pageSize = 100,
+      pageSize = 50, // HighLevel max is 50
       agentId,
       contactId,
       callType,

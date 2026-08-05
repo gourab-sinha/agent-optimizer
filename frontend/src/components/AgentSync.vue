@@ -7,6 +7,10 @@ const loading = ref(false)
 const syncing = ref(false)
 const error = ref('')
 const lastSync = ref<Date | null>(null)
+const expandedAgent = ref<string | null>(null)
+const agentCalls = ref<Record<string, any[]>>({})
+const loadingCalls = ref<Record<string, boolean>>({})
+const syncingCalls = ref<Record<string, boolean>>({})
 
 // Request and listen for SSO data from HighLevel parent window
 async function requestSSOFromParent() {
@@ -252,6 +256,89 @@ function formatDate(date: Date | null) {
     minute: '2-digit'
   }).format(date)
 }
+
+function toggleAgentCalls(agentId: string) {
+  if (expandedAgent.value === agentId) {
+    expandedAgent.value = null
+  } else {
+    expandedAgent.value = agentId
+    if (!agentCalls.value[agentId]) {
+      loadAgentCalls(agentId)
+    }
+  }
+}
+
+async function loadAgentCalls(agentId: string) {
+  loadingCalls.value[agentId] = true
+
+  try {
+    const response = await fetch(`/api/calls/agent/${agentId}`)
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    }
+
+    const data = await response.json()
+
+    if (data.success) {
+      agentCalls.value[agentId] = data.data
+    } else {
+      console.error('Failed to load calls:', data.message)
+    }
+  } catch (err: any) {
+    console.error('Load calls error:', err)
+  } finally {
+    loadingCalls.value[agentId] = false
+  }
+}
+
+async function syncAgentCalls(agentId: string) {
+  if (!locationId.value) return
+
+  syncingCalls.value[agentId] = true
+
+  try {
+    const response = await fetch(`/api/calls/sync-agent/${agentId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ locationId: locationId.value })
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    }
+
+    const data = await response.json()
+
+    if (data.success) {
+      agentCalls.value[agentId] = data.data
+    } else {
+      console.error('Failed to sync calls:', data.message)
+    }
+  } catch (err: any) {
+    console.error('Sync calls error:', err)
+  } finally {
+    syncingCalls.value[agentId] = false
+  }
+}
+
+function formatDuration(seconds: number) {
+  if (!seconds) return '0s'
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`
+}
+
+function formatCallDate(dateStr: string) {
+  if (!dateStr) return 'Unknown'
+  const date = new Date(dateStr)
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(date)
+}
 </script>
 
 <template>
@@ -334,6 +421,69 @@ function formatDate(date: Date | null) {
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
             {{ agent.config.actions.length }} action{{ agent.config.actions.length !== 1 ? 's' : '' }}
+          </div>
+        </div>
+
+        <!-- Call Logs Button -->
+        <button
+          @click="toggleAgentCalls(agent.id)"
+          class="calls-toggle"
+        >
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+          </svg>
+          {{ expandedAgent === agent.id ? 'Hide' : 'View' }} Call Logs
+        </button>
+
+        <!-- Expandable Call Logs Section -->
+        <div v-if="expandedAgent === agent.id" class="calls-section">
+          <div class="calls-header">
+            <h4>Call Logs</h4>
+            <button
+              @click="syncAgentCalls(agent.id)"
+              :disabled="syncingCalls[agent.id]"
+              class="sync-calls-btn"
+            >
+              <svg v-if="syncingCalls[agent.id]" class="spinner small" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" opacity="0.25"/>
+                <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" opacity="0.75"/>
+              </svg>
+              <svg v-else class="icon small" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              {{ syncingCalls[agent.id] ? 'Syncing...' : 'Sync' }}
+            </button>
+          </div>
+
+          <!-- Loading State -->
+          <div v-if="loadingCalls[agent.id]" class="calls-loading">
+            <svg class="spinner small" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" opacity="0.25"/>
+              <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" opacity="0.75"/>
+            </svg>
+            <span>Loading calls...</span>
+          </div>
+
+          <!-- Calls List -->
+          <div v-else-if="agentCalls[agent.id]?.length" class="calls-list">
+            <div v-for="call in agentCalls[agent.id].slice(0, 10)" :key="call.id" class="call-item">
+              <div class="call-info">
+                <div class="call-phone">{{ call.phone_number || 'Unknown' }}</div>
+                <div class="call-meta">
+                  <span class="call-kind">{{ call.kind }}</span>
+                  <span class="call-date">{{ formatCallDate(call.started_at) }}</span>
+                  <span class="call-duration">{{ formatDuration(call.duration) }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-if="agentCalls[agent.id].length > 10" class="calls-more">
+              +{{ agentCalls[agent.id].length - 10 }} more calls
+            </div>
+          </div>
+
+          <!-- Empty State -->
+          <div v-else class="calls-empty">
+            <p>No calls found. Click "Sync" to fetch call logs from HighLevel.</p>
           </div>
         </div>
       </div>
@@ -550,6 +700,154 @@ h1 {
 .empty-state p {
   font-size: 14px;
   color: #718096;
+  margin: 0;
+}
+
+/* Call Logs Styles */
+.calls-toggle {
+  width: 100%;
+  margin-top: 16px;
+  padding: 10px 16px;
+  background: #f7fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #4a5568;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.calls-toggle:hover {
+  background: #edf2f7;
+  border-color: #cbd5e0;
+}
+
+.calls-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.calls-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.calls-header h4 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  color: #1a202c;
+}
+
+.sync-calls-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #4f46e5;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.sync-calls-btn:hover:not(:disabled) {
+  background: #4338ca;
+}
+
+.sync-calls-btn:disabled {
+  background: #a5b4fc;
+  cursor: not-allowed;
+}
+
+.icon.small {
+  width: 12px;
+  height: 12px;
+}
+
+.spinner.small {
+  width: 12px;
+  height: 12px;
+}
+
+.calls-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px;
+  color: #718096;
+  font-size: 13px;
+}
+
+.calls-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.call-item {
+  padding: 10px;
+  background: #f7fafc;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+}
+
+.call-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.call-phone {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1a202c;
+}
+
+.call-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: #718096;
+}
+
+.call-kind {
+  padding: 2px 8px;
+  background: #eef2ff;
+  color: #4f46e5;
+  border-radius: 4px;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.calls-more {
+  padding: 8px;
+  text-align: center;
+  font-size: 12px;
+  color: #718096;
+  font-style: italic;
+}
+
+.calls-empty {
+  padding: 20px;
+  text-align: center;
+  color: #718096;
+  font-size: 13px;
+}
+
+.calls-empty p {
   margin: 0;
 }
 </style>
