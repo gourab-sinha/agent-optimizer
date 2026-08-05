@@ -1,7 +1,11 @@
 import express from 'express';
-import oauthService from '../services/oauthService.js';
+import oauth from '../ghl/oauth.js';
 
 const router = express.Router();
+
+// In-memory state store for CSRF protection
+// TODO: Move to Redis for production scalability
+const stateStore = new Map();
 
 /**
  * OAuth Routes
@@ -15,7 +19,19 @@ const router = express.Router();
  */
 router.get('/install', (req, res) => {
   try {
-    const { url } = oauthService.getAuthorizationUrl();
+    // Generate and store state for CSRF protection
+    const state = oauth.generateState();
+    stateStore.set(state, { createdAt: Date.now() });
+
+    // Clean up old states (older than 10 minutes)
+    const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
+    for (const [key, value] of stateStore.entries()) {
+      if (value.createdAt < tenMinutesAgo) {
+        stateStore.delete(key);
+      }
+    }
+
+    const url = oauth.getAuthorizationUrl(state);
 
     // Redirect to HighLevel OAuth page
     res.redirect(url);
@@ -24,32 +40,6 @@ router.get('/install', (req, res) => {
     res.status(500).json({
       success: false,
       error: 'OAuth initiation failed',
-      message: error.message
-    });
-  }
-});
-
-/**
- * @route   POST /api/oauth/decrypt-sso
- * @desc    Decrypt SSO data from HighLevel iframe
- * @access  Public
- */
-router.post('/decrypt-sso', async (req, res) => {
-  try {
-    const { key } = req.body;
-
-    const decryptedData = await oauthService.decryptAndLinkSSO(key);
-
-    res.json({
-      success: true,
-      data: decryptedData
-    });
-
-  } catch (error) {
-    console.error('SSO decryption failed:', error);
-    res.status(400).json({
-      success: false,
-      error: 'Failed to decrypt SSO data',
       message: error.message
     });
   }
@@ -68,8 +58,20 @@ router.get('/callback', async (req, res) => {
       throw new Error('Missing code parameter');
     }
 
+    if (!state) {
+      throw new Error('Missing state parameter');
+    }
+
+    // Validate state (CSRF protection)
+    if (!stateStore.has(state)) {
+      throw new Error('Invalid state parameter - possible CSRF attack');
+    }
+
+    // Remove state after validation (one-time use)
+    stateStore.delete(state);
+
     // Complete OAuth flow
-    const result = await oauthService.completeOAuthFlow(code, state);
+    const result = await oauth.completeOAuthFlow(code, state, state);
 
     // Show success page
     res.send(`
@@ -121,6 +123,7 @@ router.get('/callback', async (req, res) => {
     `);
 
   } catch (error) {
+    console.error('OAuth callback error:', error);
     res.status(400).send(`
       <!DOCTYPE html>
       <html>
@@ -171,7 +174,7 @@ router.get('/callback', async (req, res) => {
  */
 router.get('/locations', async (req, res) => {
   try {
-    const locations = await oauthService.getInstalledLocations();
+    const locations = await oauth.getInstalledLocations();
 
     res.json({
       success: true,
@@ -197,7 +200,7 @@ router.delete('/locations/:locationId', async (req, res) => {
   try {
     const { locationId } = req.params;
 
-    await oauthService.revokeLocation(locationId);
+    await oauth.revokeLocation(locationId);
 
     res.json({
       success: true,
