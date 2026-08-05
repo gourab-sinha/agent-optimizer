@@ -1,6 +1,7 @@
 import express from 'express';
 import locationRoutes from './locationRoutes.js';
 import agentRoutes from './agentRoutes.js';
+import agentSyncRoutes from './agentSyncRoutes.js';
 import callRoutes from './callRoutes.js';
 import oauthRoutes from './oauthRoutes.js';
 
@@ -12,6 +13,7 @@ const router = express.Router();
  *
  * Routes:
  * - *      /api/oauth/*
+ * - *      /api/webhooks/*
  * - *      /api/locations/*
  * - *      /api/agents/*
  * - *      /api/calls/*
@@ -22,7 +24,7 @@ router.use('/oauth', oauthRoutes);
 
 // Entity routes
 router.use('/locations', locationRoutes);
-router.use('/agents', agentRoutes);
+router.use('/agents', agentSyncRoutes);
 router.use('/calls', callRoutes);
 
 // 404 handler for API routes
