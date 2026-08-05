@@ -232,25 +232,55 @@ export async function completeOAuthFlow(code, state, expectedState) {
   // Store location and tokens
   const location = await storeLocation(tokenData);
 
-  // Fetch and store agents from HighLevel
+  // Fetch and store agents from HighLevel with full configuration
   try {
-    const { listAgents } = await import('./agents.js');
-    const agents = await listAgents(location.locationId);
+    const { listAgents, getAgent } = await import('./agents.js');
+    const agentList = await listAgents(location.locationId);
 
-    console.log(`Fetched ${agents.length} agents from HighLevel`);
+    console.log(`Fetched ${agentList.length} agents from HighLevel`);
 
-    // Store agents in database
-    for (const agent of agents) {
-      await db.query(
-        `INSERT INTO agents (id, location_id, name)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (id) DO UPDATE
-         SET name = $3, updated_at = NOW()`,
-        [agent.id, location.locationId, agent.name]
-      );
+    // Fetch full details for each agent and store
+    for (const agentSummary of agentList) {
+      try {
+        // Fetch full agent details (not just summary)
+        const agent = await getAgent(location.locationId, agentSummary.id);
+
+        await db.query(
+          `INSERT INTO agents (
+             id, location_id, name, config,
+             business_name, voice_id, language, inbound_number, timezone
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           ON CONFLICT (id) DO UPDATE
+           SET name = $3,
+               config = $4,
+               business_name = $5,
+               voice_id = $6,
+               language = $7,
+               inbound_number = $8,
+               timezone = $9,
+               updated_at = NOW()`,
+          [
+            agent.id,
+            location.locationId,
+            agent.agentName || agent.name,
+            JSON.stringify(agent), // Store full config as JSONB
+            agent.businessName,
+            agent.voiceId,
+            agent.language,
+            agent.inboundNumber,
+            agent.timezone
+          ]
+        );
+
+        console.log(`  ✓ Synced agent: ${agent.agentName || agent.name}`);
+      } catch (error) {
+        console.error(`  ✗ Failed to sync agent ${agentSummary.id}:`, error.message);
+        // Continue with other agents
+      }
     }
 
-    console.log(`✓ Stored ${agents.length} agents in database`);
+    console.log(`✓ Stored ${agentList.length} agents with full configuration in database`);
   } catch (error) {
     console.error('Failed to fetch agents during OAuth:', error.message);
     // Don't fail the OAuth flow if agent fetch fails
