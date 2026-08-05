@@ -1,8 +1,11 @@
-import { ghl } from './client.js';
+import ghlClient from './sdk-client.js';
 
 /**
  * HighLevel Voice AI Calls API
- * Wrapper functions for call-related API calls
+ * Wrapper functions using official @gohighlevel/api-client SDK
+ *
+ * API Documentation: https://marketplace.gohighlevel.com/docs/ghl/voice-ai/dashboard
+ * Call Logs Endpoint: GET /voice-ai/dashboard/call-logs
  */
 
 /**
@@ -13,14 +16,34 @@ import { ghl } from './client.js';
  */
 export async function listCalls(locationId, options = {}) {
   try {
-    const { limit = 100, skip = 0, agentId, startDate, endDate } = options;
+    const {
+      page = 1,
+      pageSize = 100,
+      agentId,
+      contactId,
+      callType,
+      startDate,
+      endDate,
+      actionType,
+      sortBy,
+      sort
+    } = options;
 
-    const query = { limit, skip };
-    if (agentId) query.agentId = agentId;
-    if (startDate) query.startDate = startDate;
-    if (endDate) query.endDate = endDate;
+    const params = {
+      page,
+      pageSize
+    };
 
-    const response = await ghl(locationId, 'GET', '/voice-ai/dashboard/call-logs', { query });
+    if (agentId) params.agentId = agentId;
+    if (contactId) params.contactId = contactId;
+    if (callType) params.callType = callType;
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+    if (actionType) params.actionType = actionType;
+    if (sortBy) params.sortBy = sortBy;
+    if (sort) params.sort = sort;
+
+    const response = await ghlClient.voiceAi(locationId).getCallLogs(params);
 
     console.log(`Fetched ${response.calls?.length || 0} calls for location ${locationId}`);
 
@@ -40,7 +63,7 @@ export async function listCalls(locationId, options = {}) {
  */
 export async function getCall(locationId, callId) {
   try {
-    const response = await ghl(locationId, 'GET', `/voice-ai/dashboard/call-logs/${callId}`);
+    const response = await ghlClient.voiceAi(locationId).getCallLog(callId);
     return response.call || response;
 
   } catch (error) {
@@ -51,14 +74,16 @@ export async function getCall(locationId, callId) {
 
 /**
  * Get call transcript
+ * Note: This may require a different endpoint not yet available in SDK
  * @param {string} locationId - GHL location ID
  * @param {string} callId - Call ID
  * @returns {Promise<Object>} Call transcript
  */
 export async function getCallTranscript(locationId, callId) {
   try {
-    const response = await ghl(locationId, 'GET', `/v1/voice/calls/${callId}/transcript`);
-    return response.transcript || response;
+    // First get the call log which may contain transcript
+    const call = await getCall(locationId, callId);
+    return call.transcript || call;
 
   } catch (error) {
     console.error(`Failed to get transcript for call ${callId}:`, error.message);
@@ -68,14 +93,16 @@ export async function getCallTranscript(locationId, callId) {
 
 /**
  * Get call recording URL
+ * Note: This may require a different endpoint not yet available in SDK
  * @param {string} locationId - GHL location ID
  * @param {string} callId - Call ID
  * @returns {Promise<Object>} Recording data with URL
  */
 export async function getCallRecording(locationId, callId) {
   try {
-    const response = await ghl(locationId, 'GET', `/v1/voice/calls/${callId}/recording`);
-    return response.recording || response;
+    // Get call log which may contain recording URL
+    const call = await getCall(locationId, callId);
+    return call.recording || call;
 
   } catch (error) {
     console.error(`Failed to get recording for call ${callId}:`, error.message);
@@ -85,14 +112,16 @@ export async function getCallRecording(locationId, callId) {
 
 /**
  * Get call analytics/metrics
+ * Note: This may require a different endpoint not yet available in SDK
  * @param {string} locationId - GHL location ID
  * @param {string} callId - Call ID
  * @returns {Promise<Object>} Call analytics
  */
 export async function getCallAnalytics(locationId, callId) {
   try {
-    const response = await ghl(locationId, 'GET', `/v1/voice/calls/${callId}/analytics`);
-    return response.analytics || response;
+    // Get call log which may contain analytics
+    const call = await getCall(locationId, callId);
+    return call.analytics || call;
 
   } catch (error) {
     console.error(`Failed to get analytics for call ${callId}:`, error.message);

@@ -1,14 +1,12 @@
-import axios from 'axios';
 import db from '../db/connection.js';
 import { encrypt } from '../utils/encryption.js';
+import ghlClient from './sdk-client.js';
 
 /**
  * HighLevel OAuth 2.0 Flow Implementation
  * Handles marketplace app installation and token management
+ * Uses official @gohighlevel/api-client SDK
  */
-
-const GHL_OAUTH_BASE = process.env.GHL_OAUTH_BASE;
-const GHL_TOKEN_URL = process.env.GHL_TOKEN_URL;
 
 const CLIENT_ID = process.env.GHL_CLIENT_ID;
 const CLIENT_SECRET = process.env.GHL_CLIENT_SECRET;
@@ -23,15 +21,15 @@ const SCOPES = process.env.GHL_SCOPES || 'voice-ai-agents.readonly,voice-ai-agen
  * @returns {string} Authorization URL
  */
 export function getAuthorizationUrl(state) {
-  const params = new URLSearchParams({
-    response_type: 'code',
-    client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI,
-    scope: SCOPES,
-    state: state || generateState()
-  });
+  // Use SDK's OAuth module to generate authorization URL
+  const url = ghlClient.oauth.getAuthorizationUrl(
+    CLIENT_ID,
+    REDIRECT_URI,
+    SCOPES
+  );
 
-  const url = `${GHL_OAUTH_BASE}/chooselocation?${params.toString()}`;
+  // Add state parameter for CSRF protection
+  const urlWithState = state ? `${url}&state=${state}` : url;
 
   console.log('Generated OAuth URL:', {
     clientId: CLIENT_ID,
@@ -39,7 +37,7 @@ export function getAuthorizationUrl(state) {
     scopes: SCOPES.split(',')
   });
 
-  return url;
+  return urlWithState;
 }
 
 /**
@@ -62,23 +60,14 @@ export async function exchangeCodeForToken(code) {
   try {
     console.log('Exchanging authorization code for tokens...');
 
-    const response = await axios.post(
-      GHL_TOKEN_URL,
-      {
-        client_id: CLIENT_ID,
-        client_secret: CLIENT_SECRET,
-        grant_type: 'authorization_code',
-        code: code,
-        redirect_uri: REDIRECT_URI
-      },
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
-      }
-    );
-
-    const data = response.data;
+    // Use SDK's OAuth module to exchange code for token
+    const data = await ghlClient.oauth.getAccessToken({
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      grant_type: 'authorization_code',
+      code: code,
+      redirect_uri: REDIRECT_URI
+    });
 
     console.log('✓ Tokens received successfully');
     console.log('\n=== FULL OAUTH TOKEN RESPONSE ===');
@@ -253,11 +242,11 @@ export async function completeOAuthFlow(code, state, expectedState) {
     // Store agents in database
     for (const agent of agents) {
       await db.query(
-        `INSERT INTO agents (id, location_id, name, kind)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO agents (id, location_id, name)
+         VALUES ($1, $2, $3)
          ON CONFLICT (id) DO UPDATE
          SET name = $3, updated_at = NOW()`,
-        [agent.id, location.locationId, agent.name, 'assistant']
+        [agent.id, location.locationId, agent.name]
       );
     }
 
