@@ -468,11 +468,11 @@ function formatCallDate(dateStr: string) {
           <div v-else-if="agentCalls[agent.id]?.length" class="calls-list">
             <div v-for="call in agentCalls[agent.id].slice(0, 10)" :key="call.id" class="call-item">
               <div class="call-info">
-                <div class="call-phone">{{ call.phone_number || 'Unknown' }}</div>
+                <div class="call-phone">{{ call.summary?.substring(0, 60) || 'Call Summary' }}...</div>
                 <div class="call-meta">
                   <span class="call-kind">{{ call.kind }}</span>
-                  <span class="call-date">{{ formatCallDate(call.started_at) }}</span>
-                  <span class="call-duration">{{ formatDuration(call.duration) }}</span>
+                  <span class="call-date">{{ formatCallDate(call.created_at_ghl) }}</span>
+                  <span class="call-duration">{{ formatDuration(call.duration_s) }}</span>
                 </div>
               </div>
             </div>

@@ -45,9 +45,11 @@ export async function listCalls(locationId, options = {}) {
 
     const response = await ghlClient.voiceAi(locationId).getCallLogs(params);
 
-    console.log(`Fetched ${response.calls?.length || 0} calls for location ${locationId}`);
+    console.log(`[HighLevel API] Raw response:`, JSON.stringify(response, null, 2));
+    console.log(`[HighLevel API] Response keys:`, Object.keys(response));
+    console.log(`[HighLevel API] CallLogs array length:`, response.callLogs?.length || 0);
 
-    return response.calls || [];
+    return response.callLogs || [];
 
   } catch (error) {
     console.error(`Failed to list calls for location ${locationId}:`, error.message);

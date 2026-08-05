@@ -42,13 +42,13 @@ export async function syncAgentCalls(locationId, agentId, options = {}) {
       [
         call.id,
         agentId,
-        call.kind || 'real',
-        call.createdAt || call.created_at || new Date().toISOString(),
-        call.duration || call.durationSeconds || 0,
+        call.trialCall ? 'simulated' : 'real', // Use trialCall to determine kind
+        call.createdAt || new Date().toISOString(),
+        call.duration || 0,
         call.summary || null,
-        call.transcript || call.rawTranscript || null,
-        JSON.stringify(call.executedActions || call.executed_actions || []),
-        JSON.stringify(call.extractedData || call.extracted_data || {})
+        call.transcript || null,
+        JSON.stringify(call.executedCallActions || []),
+        JSON.stringify(call.extractedData || {})
       ]
     );
 
