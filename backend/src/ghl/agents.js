@@ -16,7 +16,11 @@ export async function listAgents(locationId, options = {}) {
     const { limit = 100, skip = 0 } = options;
 
     const response = await ghl(locationId, 'GET', '/voice-ai/agents', {
-      query: { limit, skip }
+      query: {
+        locationId,  // HighLevel requires locationId in query params
+        limit,
+        skip
+      }
     });
 
     console.log(`Fetched ${response.agents?.length || 0} agents for location ${locationId}`);

@@ -154,7 +154,11 @@ export async function storeLocation(tokenData, locationInfo = {}) {
     : null;
 
   try {
-    await db.transaction(async (client) => {
+    const client = await db.getClient();
+
+    try {
+      await client.query('BEGIN');
+
       // Check if location already exists
       const existing = await client.query(
         'SELECT id FROM locations WHERE id = $1',
@@ -197,7 +201,14 @@ export async function storeLocation(tokenData, locationInfo = {}) {
 
         console.log(`✓ Created new location ${locationId}`);
       }
-    });
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
 
     return {
       locationId,
@@ -273,17 +284,15 @@ export async function revokeLocation(locationId) {
   try {
     console.log(`Revoking access for location ${locationId}...`);
 
-    await db.transaction(async (client) => {
-      // Delete location (CASCADE will handle related records)
-      const result = await client.query(
-        'DELETE FROM locations WHERE id = $1',
-        [locationId]
-      );
+    // Delete location (CASCADE will handle related records)
+    const result = await db.query(
+      'DELETE FROM locations WHERE id = $1',
+      [locationId]
+    );
 
-      if (result.rowCount === 0) {
-        throw new Error(`Location ${locationId} not found`);
-      }
-    });
+    if (result.rowCount === 0) {
+      throw new Error(`Location ${locationId} not found`);
+    }
 
     console.log(`✓ Location ${locationId} revoked successfully`);
 

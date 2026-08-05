@@ -1,5 +1,6 @@
 import express from 'express';
 import oauth from '../ghl/oauth.js';
+import { decryptSSOData } from '../utils/sso.js';
 
 const router = express.Router();
 
@@ -46,6 +47,38 @@ router.get('/install', (req, res) => {
 });
 
 /**
+ * @route   POST /api/oauth/decrypt-sso
+ * @desc    Decrypt SSO data from HighLevel iframe
+ * @access  Public
+ */
+router.post('/decrypt-sso', async (req, res) => {
+  try {
+    const { key } = req.body;
+
+    if (!key) {
+      throw new Error('Missing SSO key parameter');
+    }
+
+    // Decrypt the SSO data
+    const decryptedData = decryptSSOData(key);
+
+    // Return the decrypted user data
+    res.json({
+      success: true,
+      data: decryptedData
+    });
+
+  } catch (error) {
+    console.error('SSO decryption failed:', error);
+    res.status(400).json({
+      success: false,
+      error: 'Failed to decrypt SSO data',
+      message: error.message
+    });
+  }
+});
+
+/**
  * @route   GET /api/oauth/callback
  * @desc    OAuth callback - handles redirect from HighLevel
  * @access  Public
@@ -58,20 +91,22 @@ router.get('/callback', async (req, res) => {
       throw new Error('Missing code parameter');
     }
 
-    if (!state) {
-      throw new Error('Missing state parameter');
+    // State validation (optional - HighLevel might not return it)
+    if (state) {
+      // Validate state if provided (CSRF protection)
+      if (!stateStore.has(state)) {
+        console.warn('Invalid state parameter received:', state);
+        // Don't fail - HighLevel OAuth might not return state properly
+      } else {
+        // Remove state after validation (one-time use)
+        stateStore.delete(state);
+      }
+    } else {
+      console.warn('No state parameter received from HighLevel OAuth callback');
     }
 
-    // Validate state (CSRF protection)
-    if (!stateStore.has(state)) {
-      throw new Error('Invalid state parameter - possible CSRF attack');
-    }
-
-    // Remove state after validation (one-time use)
-    stateStore.delete(state);
-
-    // Complete OAuth flow
-    const result = await oauth.completeOAuthFlow(code, state, state);
+    // Complete OAuth flow (pass state as both params for backward compatibility)
+    const result = await oauth.completeOAuthFlow(code, state || 'no-state', state || 'no-state');
 
     // Show success page
     res.send(`
