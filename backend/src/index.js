@@ -7,6 +7,7 @@ import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 
 import db from './db/connection.js';
+import apiRoutes from './routes/index.js';
 
 dotenv.config();
 
@@ -60,20 +61,20 @@ app.use('/api/', limiter);
 // Routes
 // ============================================================================
 
-// Health check
+// Root health check (outside /api for monitoring)
 app.get('/health', async (req, res) => {
   try {
     const dbHealthy = await db.healthCheck();
 
     const health = {
-      status: dbHealthy ? 'healthy' : 'unhealthy',
+      status: dbHealthy.healthy ? 'healthy' : 'unhealthy',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
-      database: dbHealthy ? 'connected' : 'disconnected',
+      database: dbHealthy,
       environment: process.env.NODE_ENV || 'development'
     };
 
-    const statusCode = dbHealthy ? 200 : 503;
+    const statusCode = dbHealthy.healthy ? 200 : 503;
     res.status(statusCode).json(health);
 
   } catch (error) {
@@ -84,6 +85,8 @@ app.get('/health', async (req, res) => {
   }
 });
 
+// Mount API routes under /api prefix
+app.use('/api', apiRoutes);
 
 // Serve frontend (if built)
 if (process.env.FRONTEND_BUILD_PATH) {
