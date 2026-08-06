@@ -149,15 +149,31 @@ router.post('/generate/:agentId', async (req, res) => {
 
     const versionId = versionResult.rows[0].id;
 
-    // Generate recommendations
-    const result = await generateRecommendations(versionId);
+    // Generate recommendations (two-phase diagnose → expand → validate → rank)
+    const result = await generateRecommendations(versionId, {
+      force: req.body?.force === true,
+      singleShot: req.body?.singleShot === true,
+    });
+
+    if (result.blocked) {
+      return res.status(400).json({
+        success: false,
+        blocked: true,
+        error: 'Insufficient data to generate recommendations',
+        readiness: result.readiness,
+        agentVersionId: versionId,
+        meta: result.meta,
+      });
+    }
 
     res.json({
       success: true,
       accepted: result.accepted.length,
       rejected: result.rejected.length,
       recommendations: result.accepted,
-      agentVersionId: versionId
+      agentVersionId: versionId,
+      readiness: result.readiness,
+      meta: result.meta,
     });
 
   } catch (error) {

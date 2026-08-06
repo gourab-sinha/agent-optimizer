@@ -1,27 +1,39 @@
 /**
- * Assemble Input - Gather context for recommendation proposal
+ * Assemble Input - Rich context for recommendation proposal
  *
- * Builds one context object containing:
- * - Current agent configuration (prompt, actions, settings)
- * - Top patterns by impact score
+ * Builds:
+ * - Agent configuration (prompt, settings, full actions)
+ * - Top patterns with finding rationales + evidence turns
  * - Latest test run results
- * - Constraints (valid recTypes, actionTypes, criterionIds)
+ * - Prior open recommendations (dedupe / avoid repeats)
+ * - Constraints + readiness gate
  */
 
 import db from '../db/connection.js';
-import { getRecTypeKeys, GHL_ACTION_TYPES } from './recTypes.js';
+import { getRecTypeKeys, GHL_ACTION_TYPES, buildRecTypeCatalog } from './recTypes.js';
 
-/**
- * Truncate text to maximum length
- */
 function truncate(text, maxLen = 240) {
   if (!text || text.length <= maxLen) return text;
   return text.substring(0, maxLen) + '...';
 }
 
 /**
- * Get agent configuration and actions from agent_version
+ * Map HighLevel / internal action shapes to a rich view for the LLM
  */
+function mapAction(a) {
+  return {
+    actionId: a.id || a.actionId,
+    actionType: a.actionType,
+    actionName: a.name || a.actionName || a.action_name || 'unnamed',
+    instructions:
+      a.instructions ||
+      a.actionParameters?.instructions ||
+      a.parameters?.instructions ||
+      '',
+    actionParameters: a.actionParameters || a.parameters || {},
+  };
+}
+
 async function getAgentConfig(agentVersionId) {
   const result = await db.query(
     `SELECT id, agent_id, config, actions
@@ -40,46 +52,27 @@ async function getAgentConfig(agentVersionId) {
 
   return {
     agentId: version.agent_id,
-    // Core prompt and messages
-    prompt: config.agentPrompt || '',
+    prompt: config.agentPrompt || config.prompt || '',
     welcomeMessage: config.welcomeMessage || '',
-
-    // Model configuration
     model: config.model || '',
     temperature: config.temperature !== undefined ? config.temperature : null,
-
-    // Call behavior settings
     patienceLevel: config.patienceLevel || 'medium',
     maxCallDuration: config.maxCallDuration || 600,
     endCallFunctionEnabled: config.endCallFunctionEnabled || false,
-
-    // Voice and language
     voiceId: config.voiceId || '',
     language: config.language || '',
-
-    // Knowledge base
     knowledgeBase: config.knowledgeBase || null,
-
-    // Transfer settings
     transferNumbers: config.transferNumbers || [],
-
-    // Actions
-    actions: actions.map(a => ({
-      actionId: a.id || a.actionId, // HighLevel uses 'id', internal uses 'actionId'
-      actionType: a.actionType,
-      actionName: a.name || a.actionName,
-      actionParameters: a.actionParameters || {}
-    })),
-
-    // Additional settings that might be useful
-    recordingEnabled: config.recordingEnabled !== undefined ? config.recordingEnabled : true,
+    actions: actions.map(mapAction),
+    recordingEnabled:
+      config.recordingEnabled !== undefined ? config.recordingEnabled : true,
     enableVoicemailDetection: config.enableVoicemailDetection || false,
-    waitForGreeting: config.waitForGreeting || false
+    waitForGreeting: config.waitForGreeting || false,
   };
 }
 
 /**
- * Get top patterns by impact score
+ * Top patterns with criterion metadata, rationales, and turn evidence
  */
 async function getTopPatterns(agentVersionId, limit = 6) {
   const result = await db.query(
@@ -90,7 +83,10 @@ async function getTopPatterns(agentVersionId, limit = 6) {
        p.fail_count,
        p.call_count,
        p.impact_score,
+       p.criterion_id,
        c.key as criterion_key,
+       c.severity as criterion_severity,
+       c.category as criterion_category,
        p.representative_finding_ids
      FROM issue_patterns p
      JOIN rubric_criteria c ON p.criterion_id = c.id
@@ -101,68 +97,61 @@ async function getTopPatterns(agentVersionId, limit = 6) {
     [agentVersionId, limit]
   );
 
-  // Get evidence turns for each pattern
   const patterns = await Promise.all(
     result.rows.map(async (pattern) => {
       const findingIds = pattern.representative_finding_ids || [];
+      let rationales = [];
+      let evidence = [];
 
-      // Get up to 3 evidence turns
-      if (findingIds.length === 0) {
-        return {
-          id: pattern.id,
-          title: pattern.title,
-          description: pattern.description,
-          criterionKey: pattern.criterion_key,
-          failCount: pattern.fail_count,
-          callCount: pattern.call_count,
-          impactScore: pattern.impact_score,
-          evidence: []
-        };
+      if (findingIds.length > 0) {
+        const findingsResult = await db.query(
+          `SELECT id, rationale, confidence, evidence_turn_ids, status
+           FROM findings
+           WHERE id = ANY($1::uuid[])
+             AND is_deleted = false
+           ORDER BY confidence DESC NULLS LAST
+           LIMIT 5`,
+          [findingIds.slice(0, 5)]
+        );
+
+        rationales = findingsResult.rows
+          .map((f) => truncate(f.rationale || '', 320))
+          .filter(Boolean);
+
+        const turnIds = findingsResult.rows
+          .flatMap((row) => row.evidence_turn_ids || [])
+          .slice(0, 5);
+
+        if (turnIds.length > 0) {
+          const turnsResult = await db.query(
+            `SELECT text, speaker
+             FROM call_turns
+             WHERE id = ANY($1::text[])
+               AND is_deleted = false`,
+            [turnIds]
+          );
+          evidence = turnsResult.rows.map((t) =>
+            truncate(
+              `${t.speaker ? t.speaker.toUpperCase() + ': ' : ''}${t.text}`,
+              240
+            )
+          );
+        }
       }
-
-      const evidenceResult = await db.query(
-        `SELECT f.evidence_turn_ids
-         FROM findings f
-         WHERE f.id = ANY($1::uuid[])
-           AND f.is_deleted = false
-         LIMIT 3`,
-        [findingIds.slice(0, 3)]
-      );
-
-      const turnIds = evidenceResult.rows
-        .flatMap(row => row.evidence_turn_ids || [])
-        .slice(0, 3);
-
-      if (turnIds.length === 0) {
-        return {
-          id: pattern.id,
-          title: pattern.title,
-          description: pattern.description,
-          criterionKey: pattern.criterion_key,
-          failCount: pattern.fail_count,
-          callCount: pattern.call_count,
-          impactScore: pattern.impact_score,
-          evidence: []
-        };
-      }
-
-      const turnsResult = await db.query(
-        `SELECT text
-         FROM call_turns
-         WHERE id = ANY($1::text[])
-           AND is_deleted = false`,
-        [turnIds]
-      );
 
       return {
         id: pattern.id,
         title: pattern.title,
         description: pattern.description,
+        criterionId: pattern.criterion_id,
         criterionKey: pattern.criterion_key,
+        criterionSeverity: pattern.criterion_severity,
+        criterionCategory: pattern.criterion_category,
         failCount: pattern.fail_count,
         callCount: pattern.call_count,
-        impactScore: pattern.impact_score,
-        evidence: turnsResult.rows.map(t => truncate(t.text, 240))
+        impactScore: Number(pattern.impact_score) || 0,
+        rationales,
+        evidence,
       };
     })
   );
@@ -170,11 +159,7 @@ async function getTopPatterns(agentVersionId, limit = 6) {
   return patterns;
 }
 
-/**
- * Get latest completed test run and its results
- */
 async function getTestResults(agentVersionId) {
-  // Get latest completed test run
   const runResult = await db.query(
     `SELECT id, runs_per_case
      FROM test_runs
@@ -187,12 +172,11 @@ async function getTestResults(agentVersionId) {
   );
 
   if (runResult.rows.length === 0) {
-    return null; // No completed test runs yet
+    return null;
   }
 
   const testRun = runResult.rows[0];
 
-  // Get test results for this run
   const resultsQuery = await db.query(
     `SELECT
        tr.test_case_id,
@@ -208,7 +192,6 @@ async function getTestResults(agentVersionId) {
     [testRun.id]
   );
 
-  // Group by test case and calculate pass rates
   const caseMap = {};
   for (const row of resultsQuery.rows) {
     if (!caseMap[row.test_case_id]) {
@@ -217,42 +200,45 @@ async function getTestResults(agentVersionId) {
         title: row.title,
         seededByPatternId: row.seeded_by_pattern_id,
         attempts: [],
-        criteriaFailures: new Map()
+        criteriaFailures: new Map(),
       };
     }
 
     caseMap[row.test_case_id].attempts.push(row.passed);
 
-    // Track failed criteria across attempts
     if (!row.passed && row.criterion_outcomes) {
-      for (const [criterionId, outcome] of Object.entries(row.criterion_outcomes)) {
+      for (const [criterionId, outcome] of Object.entries(
+        row.criterion_outcomes
+      )) {
         if (outcome.status === 'fail') {
           if (!caseMap[row.test_case_id].criteriaFailures.has(criterionId)) {
             caseMap[row.test_case_id].criteriaFailures.set(criterionId, {
               criterionId,
               key: outcome.key || 'unknown',
-              rationales: []
+              rationales: [],
             });
           }
-          caseMap[row.test_case_id].criteriaFailures.get(criterionId).rationales.push(
-            outcome.rationale || ''
-          );
+          caseMap[row.test_case_id].criteriaFailures
+            .get(criterionId)
+            .rationales.push(outcome.rationale || '');
         }
       }
     }
   }
 
-  const cases = Object.values(caseMap).map(c => {
-    const passCount = c.attempts.filter(p => p).length;
+  const cases = Object.values(caseMap).map((c) => {
+    const passCount = c.attempts.filter((p) => p).length;
     const totalAttempts = c.attempts.length;
     const passRate = totalAttempts > 0 ? passCount / totalAttempts : 0;
     const flaky = passCount > 0 && passCount < totalAttempts;
 
-    const failedCriteria = Array.from(c.criteriaFailures.values()).map(fc => ({
-      criterionId: fc.criterionId,
-      key: fc.key,
-      exampleRationale: fc.rationales[0] || ''
-    }));
+    const failedCriteria = Array.from(c.criteriaFailures.values()).map(
+      (fc) => ({
+        criterionId: fc.criterionId,
+        key: fc.key,
+        exampleRationale: fc.rationales[0] || '',
+      })
+    );
 
     return {
       id: c.id,
@@ -260,23 +246,32 @@ async function getTestResults(agentVersionId) {
       seededByPatternId: c.seededByPatternId,
       passRate,
       flaky,
-      failedCriteria
+      failedCriteria,
     };
   });
+
+  const failing = cases.filter((c) => c.passRate < 1);
+  const passing = cases.filter((c) => c.passRate === 1);
 
   return {
     runId: testRun.id,
     runsPerCase: testRun.runs_per_case,
-    cases
+    cases,
+    summary: {
+      total: cases.length,
+      failing: failing.length,
+      passing: passing.length,
+      overallPassRate:
+        cases.length > 0
+          ? cases.reduce((s, c) => s + c.passRate, 0) / cases.length
+          : null,
+    },
   };
 }
 
-/**
- * Get criterion IDs map for constraints
- */
 async function getCriterionIds(agentVersionId) {
   const result = await db.query(
-    `SELECT c.id, c.key
+    `SELECT c.id, c.key, c.severity, c.category, c.description
      FROM rubric_criteria c
      JOIN rubrics r ON c.rubric_id = r.id
      WHERE r.agent_version_id = $1
@@ -287,41 +282,134 @@ async function getCriterionIds(agentVersionId) {
   );
 
   const map = {};
+  const details = {};
   for (const row of result.rows) {
     map[row.key] = row.id;
+    details[row.id] = {
+      key: row.key,
+      severity: row.severity,
+      category: row.category,
+      description: row.description,
+    };
   }
-  return map;
+  return { map, details };
 }
 
 /**
- * Assemble complete input context for proposal generation
- *
- * @param {string} agentVersionId - Agent version UUID
- * @returns {Promise<Object>} Complete context object
+ * Open recommendations already proposed for this version (avoid repeats)
  */
-export async function assembleInput(agentVersionId) {
-  console.log(`\n📋 Assembling input for agent version ${agentVersionId}`);
+async function getPriorRecommendations(agentVersionId, limit = 15) {
+  const result = await db.query(
+    `SELECT id, rec_type, rationale, status, payload, linked_pattern_ids
+     FROM recommendations
+     WHERE agent_version_id = $1
+       AND is_deleted = false
+       AND status IN ('proposed', 'accepted', 'applied', 'verified_up')
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [agentVersionId, limit]
+  );
 
-  const [agent, patterns, testResults, criterionIds] = await Promise.all([
-    getAgentConfig(agentVersionId),
-    getTopPatterns(agentVersionId, 6),
-    getTestResults(agentVersionId),
-    getCriterionIds(agentVersionId)
-  ]);
+  return result.rows.map((r) => ({
+    id: r.id,
+    recType: r.rec_type,
+    status: r.status,
+    rationale: truncate(r.rationale || '', 160),
+    linkedPatternIds: r.linked_pattern_ids || [],
+    payloadSummary: truncate(JSON.stringify(r.payload || {}), 120),
+  }));
+}
 
-  console.log(`   ✓ Agent config: model=${agent.model || 'default'}, temp=${agent.temperature ?? 'default'}, ${agent.actions.length} actions, KB=${agent.knowledgeBase ? 'yes' : 'no'}`);
-  console.log(`   ✓ Patterns: ${patterns.length} (top by impact)`);
-  console.log(`   ✓ Test results: ${testResults ? testResults.cases.length + ' cases' : 'none yet'}`);
-  console.log(`   ✓ Criteria: ${Object.keys(criterionIds).length} enabled`);
+/**
+ * Readiness gate — whether we have enough signal to generate
+ */
+function assessReadiness(patterns, testResults, criterionIds) {
+  const reasons = [];
+  const warnings = [];
+
+  if (Object.keys(criterionIds).length === 0) {
+    reasons.push('No enabled rubric criteria — generate a rubric first');
+  }
+  if (patterns.length === 0) {
+    reasons.push('No issue patterns — run pattern detection first');
+  }
+
+  if (!testResults) {
+    warnings.push(
+      'No completed test runs — recommendations will be pattern-only (unverified)'
+    );
+  } else if (testResults.summary?.failing === 0) {
+    warnings.push(
+      'All tests currently passing — recommendations may be low priority'
+    );
+  }
+
+  const thinEvidence = patterns.filter(
+    (p) => (p.rationales?.length || 0) === 0 && (p.evidence?.length || 0) === 0
+  );
+  if (thinEvidence.length > 0 && patterns.length > 0) {
+    warnings.push(
+      `${thinEvidence.length} pattern(s) lack finding rationales/evidence`
+    );
+  }
 
   return {
+    canGenerate: reasons.length === 0,
+    reasons,
+    warnings,
+    mode: testResults ? 'patterns+tests' : 'patterns-only',
+  };
+}
+
+/**
+ * Assemble complete input context
+ *
+ * @param {string} agentVersionId
+ * @param {Object} [options]
+ * @param {number} [options.patternLimit=6]
+ * @returns {Promise<Object>}
+ */
+export async function assembleInput(agentVersionId, options = {}) {
+  const patternLimit = options.patternLimit ?? 6;
+
+  console.log(`\n📋 Assembling input for agent version ${agentVersionId}`);
+
+  const [agent, patterns, testResults, criteria, priorRecommendations] =
+    await Promise.all([
+      getAgentConfig(agentVersionId),
+      getTopPatterns(agentVersionId, patternLimit),
+      getTestResults(agentVersionId),
+      getCriterionIds(agentVersionId),
+      getPriorRecommendations(agentVersionId),
+    ]);
+
+  const readiness = assessReadiness(patterns, testResults, criteria.map);
+
+  console.log(
+    `   ✓ Agent: model=${agent.model || 'default'}, actions=${agent.actions.length}, prompt=${agent.prompt.length} chars`
+  );
+  console.log(`   ✓ Patterns: ${patterns.length}`);
+  console.log(
+    `   ✓ Tests: ${testResults ? testResults.cases.length + ' cases' : 'none'}`
+  );
+  console.log(`   ✓ Prior recs: ${priorRecommendations.length}`);
+  console.log(
+    `   ✓ Readiness: ${readiness.canGenerate ? 'OK' : 'BLOCKED'} (${readiness.mode})`
+  );
+
+  return {
+    agentVersionId,
     agent,
     patterns,
     testResults,
+    priorRecommendations,
+    readiness,
     constraints: {
       recTypes: getRecTypeKeys(),
       actionTypes: GHL_ACTION_TYPES,
-      criterionIds
-    }
+      criterionIds: criteria.map,
+      criterionDetails: criteria.details,
+      recTypeCatalog: buildRecTypeCatalog(),
+    },
   };
 }
