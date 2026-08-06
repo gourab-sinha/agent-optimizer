@@ -232,8 +232,8 @@ async function analyseAll() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           rubricId: rubric.value.id,
-          minFailCount: 2,
-          minImpactScore: 0.2
+          minFailCount: 1,
+          minImpactScore: 0.1
         })
       })
 

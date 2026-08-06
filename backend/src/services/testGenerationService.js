@@ -12,18 +12,20 @@ import { callLLM } from './llmService.js';
  *
  * @param {string} agentId - Agent ID
  * @param {Object} options - Generation options
- * @param {number} options.happyPathCount - Number of happy path cases (default: 3)
- * @param {number} options.edgeCaseCount - Number of edge cases per pattern (default: 2)
+ * @param {number} options.maxTotalCases - Maximum total test cases (default: 10)
+ * @param {number} options.minHappyPath - Minimum happy path cases (default: 2)
+ * @param {number} options.edgeCasePerPattern - Edge cases per pattern (default: 1)
  * @returns {Promise<Object>} Generated test cases
  */
 export async function generateTestCases(agentId, options = {}) {
   const {
-    happyPathCount = 3,
-    edgeCaseCount = 2
+    maxTotalCases = 10,
+    minHappyPath = 2,
+    edgeCasePerPattern = 1
   } = options;
 
   console.log(`\n🧪 Generating test cases for agent ${agentId}`);
-  console.log(`   Happy path: ${happyPathCount}, Edge cases: ${edgeCaseCount} per pattern`);
+  console.log(`   Max total cases: ${maxTotalCases}, Min happy path: ${minHappyPath}`);
 
   // Get agent details with latest version
   const agentResult = await db.query(
@@ -123,23 +125,37 @@ export async function generateTestCases(agentId, options = {}) {
   const failingFindings = findingsResult.rows;
   console.log(`   ✓ Found ${failingFindings.length} actual failures to learn from`);
 
+  // Calculate optimal distribution
+  // Strategy: Generate as many edge cases as we have patterns (up to limit),
+  // then fill remaining budget with happy paths
+  const maxEdgeCases = Math.min(patterns.length * edgeCasePerPattern, maxTotalCases - minHappyPath);
+  const actualEdgeCaseCount = Math.max(0, maxEdgeCases);
+  const actualHappyPathCount = Math.min(maxTotalCases - actualEdgeCaseCount, Math.max(minHappyPath, maxTotalCases - actualEdgeCaseCount));
+
+  console.log(`   Distribution: ${actualHappyPathCount} happy path + ${actualEdgeCaseCount} edge cases = ${actualHappyPathCount + actualEdgeCaseCount} total`);
+
   // Generate happy path test cases
   const happyPathCases = [];
-  for (let i = 0; i < happyPathCount; i++) {
-    console.log(`\n   → Generating happy path case ${i + 1}/${happyPathCount}...`);
+  for (let i = 0; i < actualHappyPathCount; i++) {
+    console.log(`\n   → Generating happy path case ${i + 1}/${actualHappyPathCount}...`);
     const testCase = await generateHappyPathCase(agent, agentPrompt, criteria, pastCalls);
     happyPathCases.push(testCase);
   }
 
-  // Generate edge case test cases from patterns
+  // Generate edge case test cases from patterns (prioritize high-impact patterns)
   const edgeCases = [];
-  for (const pattern of patterns.slice(0, 5)) { // Max 5 patterns
+  const patternsToUse = patterns.slice(0, Math.ceil(actualEdgeCaseCount / edgeCasePerPattern));
+
+  for (const pattern of patternsToUse) {
+    if (edgeCases.length >= actualEdgeCaseCount) break; // Stop if we've hit our limit
+
     console.log(`\n   → Generating edge cases for pattern: ${pattern.title}...`);
 
     // Get findings related to this pattern's criterion
     const relatedFindings = failingFindings.filter(f => f.criterion_key === pattern.criterion_key).slice(0, 3);
 
-    for (let i = 0; i < edgeCaseCount; i++) {
+    const casesToGenerate = Math.min(edgeCasePerPattern, actualEdgeCaseCount - edgeCases.length);
+    for (let i = 0; i < casesToGenerate; i++) {
       const testCase = await generateEdgeCase(agent, agentPrompt, pattern, criteria, relatedFindings);
       edgeCases.push(testCase);
     }
@@ -168,7 +184,7 @@ async function generateHappyPathCase(agent, agentPrompt, criteria, pastCalls) {
   const prompt = `You are generating a test case for a voice AI agent. Create a realistic happy-path scenario where the agent performs perfectly.
 
 AGENT PROMPT:
-${agentPrompt.substring(0, 2000)}...
+${agentPrompt}...
 
 EVALUATION CRITERIA (what the agent should do):
 ${criteria.map(c => `- ${c.key}: ${c.description}`).join('\n')}
@@ -199,7 +215,16 @@ Format as JSON:
 
   const result = await callLLM({
     prompt,
-    systemPrompt: 'You generate realistic test scenarios for voice AI agents. Output valid JSON only.',
+    systemPrompt: `You are an expert QA engineer specializing in voice AI testing. Your role is to create realistic, comprehensive test scenarios that validate agent behavior across diverse customer interactions.
+
+Key principles:
+- Generate scenarios that mirror real customer conversations
+- Create personas with authentic demographic details and communication patterns
+- Design test flows that validate multiple success criteria simultaneously
+- Ensure scenarios are specific enough to be actionable but flexible enough to allow natural conversation
+- Focus on real-world use cases, not edge cases (save those for edge-case generation)
+
+Output format: Return ONLY valid JSON matching the specified schema. No markdown, no code blocks, just pure JSON.`,
     stage: 'test_generation',
     temperature: 0.8,
     maxTokens: 800,
@@ -274,7 +299,7 @@ async function generateEdgeCase(agent, agentPrompt, pattern, criteria, relatedFi
   const prompt = `You are generating an edge-case test for a voice AI agent that has a known failure pattern.
 
 AGENT PROMPT:
-${agentPrompt.substring(0, 2000)}...
+${agentPrompt}...
 
 KNOWN FAILURE PATTERN:
 - Title: ${pattern.title}
@@ -312,10 +337,21 @@ Format as JSON:
 
   const result = await callLLM({
     prompt,
-    systemPrompt: 'You generate challenging edge-case scenarios for voice AI testing. Output valid JSON only.',
+    systemPrompt: `You are a specialized QA engineer focused on adversarial testing for voice AI agents. Your expertise is in creating challenging edge-case scenarios that expose known weaknesses and failure patterns.
+
+Your approach:
+- Study real failure examples carefully to understand root causes
+- Design scenarios that deliberately trigger known failure modes
+- Create realistic but difficult personas (impatient, confused, skeptical, non-native speakers, etc.)
+- Introduce complexities that have historically caused the agent to fail (interruptions, multi-part requests, unclear needs, etc.)
+- The goal is NOT to trick the agent unfairly, but to test if it can handle realistic difficult situations
+
+Critical: Base your scenarios on the REAL FAILURE EXAMPLES provided. Mirror the conditions, persona types, and conversation patterns that led to actual failures. This ensures your test cases are grounded in reality, not hypothetical.
+
+Output format: Return ONLY valid JSON matching the specified schema. No markdown, no code blocks, just pure JSON.`,
     stage: 'test_generation',
     temperature: 0.9,
-    maxTokens: 600,
+    maxTokens: 16000,
     responseFormat: 'json'
   });
 

@@ -76,8 +76,8 @@ async function detectPatterns() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         rubricId: rubricId.value,
-        minFailCount: 2,
-        minImpactScore: 0.3
+        minFailCount: 1,
+        minImpactScore: 0.1
       })
     })
 

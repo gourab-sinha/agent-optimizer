@@ -493,8 +493,9 @@ export default {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             agentId: this.agentId,
-            happyPathCount: 2,
-            edgeCaseCount: 1
+            maxTotalCases: 10,      // Maximum total test cases
+            minHappyPath: 2,         // Ensure at least 2 happy path cases
+            edgeCasePerPattern: 1    // Generate 1 edge case per detected pattern
           })
         })
         const data = await response.json()

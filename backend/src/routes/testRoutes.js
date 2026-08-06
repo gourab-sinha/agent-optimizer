@@ -12,11 +12,20 @@ const router = express.Router();
 /**
  * @route   POST /api/tests/generate
  * @desc    Generate test cases for an agent
- * @body    { agentId, happyPathCount?, edgeCaseCount? }
+ * @body    { agentId, maxTotalCases?, minHappyPath?, edgeCasePerPattern? }
+ *          (Also supports legacy: happyPathCount, edgeCaseCount)
  */
 router.post('/generate', async (req, res) => {
   try {
-    const { agentId, happyPathCount, edgeCaseCount } = req.body;
+    const {
+      agentId,
+      maxTotalCases,
+      minHappyPath,
+      edgeCasePerPattern,
+      // Legacy parameter support
+      happyPathCount,
+      edgeCaseCount
+    } = req.body;
 
     if (!agentId) {
       return res.status(400).json({
@@ -25,10 +34,24 @@ router.post('/generate', async (req, res) => {
       });
     }
 
-    const result = await testGenerationService.generateTestCases(agentId, {
-      happyPathCount,
-      edgeCaseCount
-    });
+    // Build options object with new or legacy parameters
+    const options = {};
+
+    // New parameters (preferred)
+    if (maxTotalCases !== undefined) options.maxTotalCases = maxTotalCases;
+    if (minHappyPath !== undefined) options.minHappyPath = minHappyPath;
+    if (edgeCasePerPattern !== undefined) options.edgeCasePerPattern = edgeCasePerPattern;
+
+    // Legacy parameters (backward compatibility)
+    // If old params provided and new ones aren't, convert them
+    if (happyPathCount !== undefined && minHappyPath === undefined) {
+      options.minHappyPath = happyPathCount;
+    }
+    if (edgeCaseCount !== undefined && edgeCasePerPattern === undefined) {
+      options.edgeCasePerPattern = edgeCaseCount;
+    }
+
+    const result = await testGenerationService.generateTestCases(agentId, options);
 
     res.json(result);
   } catch (error) {
