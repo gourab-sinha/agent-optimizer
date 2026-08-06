@@ -27,8 +27,11 @@ export async function generateRubricForAgentVersion(agentVersionId) {
   const config = version.config;
   const actions = version.actions;
 
+  // Fetch sample calls to understand real agent behavior
+  const sampleCalls = await fetchSampleCalls(version.agent_id, 3);
+
   // Build the prompt for rubric generation
-  const prompt = buildRubricGenerationPrompt(config, actions);
+  const prompt = buildRubricGenerationPrompt(config, actions, sampleCalls);
 
   // Call LLM to generate rubric
   const result = await callLLM({
@@ -121,9 +124,35 @@ export async function generateRubricForAgentVersion(agentVersionId) {
 }
 
 /**
+ * Fetch sample calls to understand real agent behavior
+ */
+async function fetchSampleCalls(agentId, limit = 3) {
+  const result = await db.query(
+    `SELECT c.id, c.summary, c.duration_s, c.executed_actions, c.extracted_data,
+            COALESCE(
+              (SELECT json_agg(json_build_object(
+                'idx', ct.idx,
+                'speaker', ct.speaker,
+                'text', ct.text
+              ) ORDER BY ct.idx)
+              FROM call_turns ct
+              WHERE ct.call_id = c.id AND ct.is_deleted = false),
+              '[]'::json
+            ) as turns
+     FROM calls c
+     WHERE c.agent_id = $1 AND c.is_deleted = false
+     ORDER BY c.created_at_ghl DESC
+     LIMIT $2`,
+    [agentId, limit]
+  );
+
+  return result.rows;
+}
+
+/**
  * Build the prompt for rubric generation
  */
-function buildRubricGenerationPrompt(config, actions) {
+function buildRubricGenerationPrompt(config, actions, sampleCalls = []) {
   const prompt = config.prompt || '';
   const model = config.model || 'Unknown';
   const temperature = config.temperature || 'Not specified';
@@ -132,6 +161,32 @@ function buildRubricGenerationPrompt(config, actions) {
   const actionNames = Array.isArray(actions)
     ? actions.map(a => a.name || a.title || 'unnamed').join(', ')
     : 'None';
+
+  // Build sample calls context
+  let sampleCallsContext = '';
+  if (sampleCalls.length > 0) {
+    sampleCallsContext = '\n\nSAMPLE CALLS (real agent behavior):\n';
+    sampleCalls.forEach((call, idx) => {
+      const turns = Array.isArray(call.turns) ? call.turns : [];
+      const transcript = turns.map(t => `${t.speaker.toUpperCase()}: ${t.text}`).join('\n');
+      const executedActions = Array.isArray(call.executed_actions) ? call.executed_actions : [];
+      const extractedData = call.extracted_data || {};
+
+      sampleCallsContext += `\nCall ${idx + 1}:\n`;
+      sampleCallsContext += `Summary: ${call.summary || 'N/A'}\n`;
+      sampleCallsContext += `Duration: ${call.duration_s || 0}s\n`;
+
+      if (executedActions.length > 0) {
+        sampleCallsContext += `Actions Executed: ${executedActions.map(a => a.name || a.action || 'unknown').join(', ')}\n`;
+      }
+
+      if (Object.keys(extractedData).length > 0) {
+        sampleCallsContext += `Data Extracted: ${JSON.stringify(extractedData)}\n`;
+      }
+
+      sampleCallsContext += `Transcript:\n${transcript.substring(0, 500)}${transcript.length > 500 ? '...' : ''}\n`;
+    });
+  }
 
   return `You are analyzing a voice AI agent configuration to generate an evaluation rubric.
 
@@ -142,9 +197,16 @@ Actions Available: ${actionNames}
 
 AGENT PROMPT:
 ${prompt}
+${sampleCallsContext}
 
 TASK:
-Generate 6-14 evaluation criteria that trace to the agent's actual instructions. Each criterion must be specific, measurable, and tied to something the agent was told to do.
+Generate 6-14 evaluation criteria that trace to the agent's actual instructions and observed behavior. Each criterion must be specific, measurable, and tied to something the agent was told to do or actions it commonly performs.
+
+Use the sample calls above to understand:
+- What actions the agent actually executes
+- What data the agent typically extracts
+- Common conversation patterns
+- Real success and failure scenarios
 
 CATEGORIES (use these exact values):
 - data_collection: Extracting required information
@@ -566,11 +628,33 @@ function evaluateDeterministicCriterion(call, criterion, checkSpec) {
 async function evaluateLLMCriterion(call, criterion, checkSpec) {
   const question = checkSpec.question;
   const turns = Array.isArray(call.turns) ? call.turns : [];
+  const executedActions = Array.isArray(call.executed_actions) ? call.executed_actions : [];
+  const extractedData = call.extracted_data || {};
 
   // Build transcript
   const transcript = turns
     .map(t => `${t.speaker.toUpperCase()}: ${t.text}`)
     .join('\n');
+
+  // Build actions context
+  let actionsContext = '';
+  if (executedActions.length > 0) {
+    actionsContext = '\n\nACTIONS EXECUTED:\n';
+    executedActions.forEach((action, idx) => {
+      actionsContext += `${idx + 1}. ${action.name || action.action || 'unknown'}`;
+      if (action.parameters) {
+        actionsContext += ` (params: ${JSON.stringify(action.parameters)})`;
+      }
+      actionsContext += '\n';
+    });
+  }
+
+  // Build extracted data context
+  let extractedDataContext = '';
+  if (Object.keys(extractedData).length > 0) {
+    extractedDataContext = '\n\nDATA EXTRACTED:\n';
+    extractedDataContext += JSON.stringify(extractedData, null, 2);
+  }
 
   // Build evaluation prompt
   const prompt = `You are evaluating a voice AI call against a specific criterion.
@@ -579,16 +663,19 @@ CRITERION: ${criterion.description}
 
 CALL TRANSCRIPT:
 ${transcript}
+${actionsContext}
+${extractedDataContext}
 
 EVALUATION QUESTION:
 ${question}
 
 INSTRUCTIONS:
-1. Read the transcript carefully
-2. Answer the question with "yes" or "no"
-3. Provide a confidence score (0.0 to 1.0)
-4. Explain your reasoning in 1-2 sentences
-5. If relevant, cite specific turn indices as evidence
+1. Read the transcript, actions executed, and extracted data carefully
+2. Consider what the agent said AND what actions it performed
+3. Answer the question with "yes" or "no"
+4. Provide a confidence score (0.0 to 1.0)
+5. Explain your reasoning in 1-2 sentences
+6. If relevant, cite specific turn indices as evidence
 
 OUTPUT FORMAT (return valid JSON):
 {
