@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import AgentAnalysis from './AgentAnalysis.vue'
 import AgentMetrics from './AgentMetrics.vue'
+import AgentTests from './AgentTests.vue'
 
 const locationId = ref('')
 const agents = ref<any[]>([])
@@ -13,13 +14,13 @@ const expandedAgent = ref<string | null>(null)
 const agentCalls = ref<Record<string, any[]>>({})
 const loadingCalls = ref<Record<string, boolean>>({})
 const syncingCalls = ref<Record<string, boolean>>({})
-const agentTabs = ref<Record<string, 'calls' | 'analysis' | 'metrics'>>({})
+const agentTabs = ref<Record<string, 'calls' | 'analysis' | 'metrics' | 'tests'>>({})
 
 function getAgentTab(agentId: string) {
   return agentTabs.value[agentId] || 'calls'
 }
 
-function setAgentTab(agentId: string, tab: 'calls' | 'analysis' | 'metrics') {
+function setAgentTab(agentId: string, tab: 'calls' | 'analysis' | 'metrics' | 'tests') {
   agentTabs.value[agentId] = tab
 }
 
@@ -339,6 +340,17 @@ function formatCallDate(dateStr: string) {
                   >
                     📊 Metrics
                   </button>
+                  <button
+                    @click="setAgentTab(agent.id, 'tests')"
+                    :class="[
+                      'px-4 py-2 rounded-lg font-medium transition-all text-sm',
+                      getAgentTab(agent.id) === 'tests'
+                        ? 'bg-white text-blue-600 shadow-md'
+                        : 'text-gray-600 hover:bg-white/50'
+                    ]"
+                  >
+                    🧪 Tests
+                  </button>
                 </div>
 
                 <!-- Call Logs Tab -->
@@ -420,6 +432,13 @@ function formatCallDate(dateStr: string) {
                     :agent-id="agent.id"
                     :agent-name="agent.name"
                     :location-id="locationId"
+                  />
+                </div>
+
+                <!-- Tests Tab -->
+                <div v-if="getAgentTab(agent.id) === 'tests'" class="bg-white rounded-xl">
+                  <AgentTests
+                    :agent-id="agent.id"
                   />
                 </div>
               </div>
