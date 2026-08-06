@@ -175,7 +175,7 @@ async function evaluateCalls() {
   }
 }
 
-// Analyse all calls (generate rubric if needed, then evaluate)
+// Analyse all calls (generate rubric if needed, then evaluate, then detect patterns)
 async function analyseAll() {
   if (!calls.value.length) {
     error.value = 'No calls to analyze'
@@ -227,6 +227,26 @@ async function analyseAll() {
       // Reload findings for selected call
       if (selectedCall.value) {
         await loadFindings(selectedCall.value)
+      }
+    }
+
+    // Step 3: Detect patterns from evaluation results
+    const patternResponse = await fetch('/api/patterns/detect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rubricId: rubric.value.id,
+        minFailCount: 2,
+        minImpactScore: 0.2
+      })
+    })
+
+    if (!patternResponse.ok) {
+      console.warn('Pattern detection failed, but continuing...')
+    } else {
+      const patternData = await patternResponse.json()
+      if (patternData.success) {
+        console.log(`✓ Detected ${patternData.patterns?.length || 0} patterns`)
       }
     }
   } catch (err: any) {
