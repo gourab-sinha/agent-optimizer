@@ -22,12 +22,32 @@ export async function syncAgentCalls(locationId, agentId, options = {}) {
   // Store each call in database
   const syncedCalls = [];
   for (const call of calls) {
+    // Log the first call to see the structure
+    if (syncedCalls.length === 0) {
+      console.log('[Call Sync] Sample call object keys:', Object.keys(call));
+      console.log('[Call Sync] Sample call object:', JSON.stringify(call, null, 2));
+    }
+
+    // Determine if call is simulated or real
+    // Check multiple possible field names that HighLevel might use
+    let kind = 'real'; // default to real
+    if (call.trialCall === true || call.trialCall === 'true') {
+      kind = 'simulated';
+    } else if (call.isSimulated === true || call.isSimulated === 'true') {
+      kind = 'simulated';
+    } else if (call.type === 'trial' || call.type === 'simulated' || call.type === 'test') {
+      kind = 'simulated';
+    } else if (call.callType === 'trial' || call.callType === 'simulated' || call.callType === 'test') {
+      kind = 'simulated';
+    }
+
     const result = await db.query(
       `INSERT INTO calls (
         id, agent_id, kind, created_at_ghl, duration_s,
-        summary, raw_transcript, executed_actions, extracted_data
+        summary, raw_transcript, executed_actions, extracted_data,
+        contact_id, from_number, is_agent_deleted, message_id, translation
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       ON CONFLICT (id) DO UPDATE SET
         agent_id = $2,
         kind = $3,
@@ -37,18 +57,28 @@ export async function syncAgentCalls(locationId, agentId, options = {}) {
         raw_transcript = $7,
         executed_actions = $8,
         extracted_data = $9,
+        contact_id = $10,
+        from_number = $11,
+        is_agent_deleted = $12,
+        message_id = $13,
+        translation = $14,
         updated_at = CURRENT_TIMESTAMP
       RETURNING *`,
       [
         call.id,
         agentId,
-        call.trialCall ? 'simulated' : 'real', // Use trialCall to determine kind
+        kind,
         call.createdAt || new Date().toISOString(),
         call.duration || 0,
         call.summary || null,
         call.transcript || null,
         JSON.stringify(call.executedCallActions || []),
-        JSON.stringify(call.extractedData || {})
+        JSON.stringify(call.extractedData || {}),
+        call.contactId || null,
+        call.fromNumber || null,
+        call.isAgentDeleted || false,
+        call.messageId || null,
+        JSON.stringify(call.translation || {})
       ]
     );
 
