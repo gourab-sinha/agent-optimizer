@@ -80,9 +80,33 @@
           <!-- Payload Preview -->
           <div class="section">
             <h4>Change Details:</h4>
-            <div class="payload-preview">
-              <pre v-if="rec.recType === 'prompt_patch'">{{ truncatePrompt(rec.payload.newPrompt) }}</pre>
-              <pre v-else>{{ JSON.stringify(rec.payload, null, 2) }}</pre>
+
+            <!-- Diff view for prompt_patch -->
+            <div v-if="rec.recType === 'prompt_patch' && rec.payload.diff" class="diff-container">
+              <div v-html="renderDiff(rec.payload.diff)" class="diff-view"></div>
+            </div>
+
+            <!-- JSON for action updates -->
+            <div v-else-if="rec.recType === 'action_update'" class="action-changes">
+              <div v-if="rec.payload.changes.actionName" class="change-item">
+                <strong>Action Name:</strong> {{ rec.payload.changes.actionName }}
+              </div>
+              <div v-if="rec.payload.changes.instructions" class="change-item">
+                <strong>Instructions:</strong>
+                <p class="instructions-text">{{ rec.payload.changes.instructions }}</p>
+              </div>
+              <div v-if="rec.payload.changes.actionParameters" class="change-item">
+                <strong>Parameters:</strong>
+                <pre class="params-json">{{ JSON.stringify(rec.payload.changes.actionParameters, null, 2) }}</pre>
+              </div>
+              <div class="change-item">
+                <strong>Target Action ID:</strong> <code>{{ rec.payload.actionId }}</code>
+              </div>
+            </div>
+
+            <!-- Fallback for other types -->
+            <div v-else class="payload-preview">
+              <pre>{{ JSON.stringify(rec.payload, null, 2) }}</pre>
             </div>
           </div>
         </div>
@@ -97,6 +121,8 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { html as diff2htmlHtml } from 'diff2html'
+import 'diff2html/bundles/css/diff2html.min.css'
 
 const props = defineProps({
   agentId: {
@@ -190,10 +216,22 @@ function formatDate(dateString) {
   return new Date(dateString).toLocaleString()
 }
 
-function truncatePrompt(prompt) {
-  if (!prompt) return ''
-  if (prompt.length <= 300) return prompt
-  return prompt.substring(0, 300) + '...\n\n(Click to view full prompt)'
+function renderDiff(diffString) {
+  if (!diffString) return '<p>No diff available</p>'
+
+  try {
+    // Render side-by-side diff: BEFORE (left) | AFTER (right)
+    const htmlOutput = diff2htmlHtml(diffString, {
+      drawFileList: false,
+      matching: 'lines',
+      outputFormat: 'side-by-side',
+      renderNothingWhenEmpty: false,
+    })
+    return htmlOutput
+  } catch (err) {
+    console.error('Failed to render diff:', err)
+    return `<pre>${diffString}</pre>`
+  }
 }
 
 // Load on mount
@@ -205,8 +243,11 @@ onMounted(() => {
 <style scoped>
 .recommendations-container {
   padding: 24px;
-  max-width: 1200px;
+  max-width: 100%;
+  width: 100%;
   margin: 0 auto;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 .header-section {
@@ -291,6 +332,8 @@ onMounted(() => {
   border-radius: 8px;
   overflow: hidden;
   transition: box-shadow 0.2s;
+  max-width: 100%;
+  word-wrap: break-word;
 }
 
 .recommendation-card:hover {
@@ -365,6 +408,8 @@ onMounted(() => {
 
 .card-body {
   padding: 16px;
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 .rationale {
@@ -375,6 +420,8 @@ onMounted(() => {
 
 .section {
   margin-top: 16px;
+  overflow: hidden;
+  position: relative;
 }
 
 .section h4 {
@@ -434,5 +481,144 @@ onMounted(() => {
 .card-footer small {
   color: #6b7280;
   font-size: 12px;
+}
+
+/* Diff viewer styles - Side-by-Side (Before | After) */
+.diff-container {
+  margin-top: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  max-height: 400px;
+  height: auto;
+  overflow-x: auto;
+  overflow-y: auto;
+  width: 100%;
+  background: #f9fafb;
+  position: relative;
+  contain: layout;
+}
+
+.diff-view {
+  font-size: 12px;
+  font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+  min-width: 100%;
+}
+
+/* Side-by-side diff layout */
+.diff-view :deep(.d2h-wrapper) {
+  min-width: 900px;
+}
+
+.diff-view :deep(.d2h-file-wrapper) {
+  border: none;
+  margin: 0;
+}
+
+.diff-view :deep(.d2h-file-header) {
+  display: none;
+}
+
+.diff-view :deep(.d2h-diff-table) {
+  font-size: 12px;
+  border-collapse: collapse;
+}
+
+/* Side-by-side columns */
+.diff-view :deep(.d2h-code-side-line) {
+  white-space: pre;
+  word-wrap: normal;
+  overflow-wrap: normal;
+  padding: 2px 8px;
+  line-height: 1.5;
+}
+
+.diff-view :deep(.d2h-code-linenumber),
+.diff-view :deep(.d2h-code-side-linenumber) {
+  min-width: 50px;
+  padding: 2px 8px;
+  text-align: right;
+  user-select: none;
+  background: #f3f4f6;
+  border-right: 1px solid #e5e7eb;
+}
+
+/* Deletion (left side - BEFORE) */
+.diff-view :deep(.d2h-del) {
+  background: #fee2e2;
+}
+
+.diff-view :deep(.d2h-del .d2h-code-side-line) {
+  background: #fef2f2;
+}
+
+/* Insertion (right side - AFTER) */
+.diff-view :deep(.d2h-ins) {
+  background: #dcfce7;
+}
+
+.diff-view :deep(.d2h-ins .d2h-code-side-line) {
+  background: #f0fdf4;
+}
+
+/* Context lines (unchanged) */
+.diff-view :deep(.d2h-cntx .d2h-code-side-line) {
+  background: #ffffff;
+}
+
+/* Action changes styles */
+.action-changes {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.change-item {
+  margin-bottom: 12px;
+}
+
+.change-item:last-child {
+  margin-bottom: 0;
+}
+
+.change-item strong {
+  display: block;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.instructions-text {
+  margin: 4px 0 0 0;
+  padding: 8px;
+  background: white;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #374151;
+}
+
+.params-json {
+  margin: 4px 0 0 0;
+  padding: 8px;
+  background: white;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'Monaco', 'Menlo', monospace;
+  color: #374151;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.change-item code {
+  background: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #1e40af;
+  font-family: 'Monaco', 'Menlo', monospace;
 }
 </style>
