@@ -29,6 +29,10 @@ const loadingFindings = ref(false)
 // Evaluation state
 const evaluating = ref(false)
 
+// Pattern state
+const patterns = ref<any[]>([])
+const loadingPatterns = ref(false)
+
 // Error handling
 const error = ref('')
 
@@ -138,6 +142,34 @@ async function loadFindings(callId: string) {
   }
 }
 
+// Load patterns for agent
+async function loadPatterns() {
+  loadingPatterns.value = true
+  try {
+    const versionId = await getAgentVersion()
+    if (!versionId) {
+      patterns.value = []
+      return
+    }
+
+    const response = await fetch(`/api/patterns/version/${versionId}`)
+    if (response.status === 404 || !response.ok) {
+      patterns.value = []
+      return
+    }
+
+    const data = await response.json()
+    if (data.success) {
+      patterns.value = data.patterns || []
+    }
+  } catch (err: any) {
+    console.error('Failed to load patterns:', err)
+    patterns.value = []
+  } finally {
+    loadingPatterns.value = false
+  }
+}
+
 // Evaluate calls
 async function evaluateCalls() {
   if (!rubric.value) {
@@ -230,24 +262,30 @@ async function analyseAll() {
       }
     }
 
-    // Step 3: Detect patterns from evaluation results
-    const patternResponse = await fetch('/api/patterns/detect', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        rubricId: rubric.value.id,
-        minFailCount: 2,
-        minImpactScore: 0.2
+    // Step 3: Detect patterns from evaluation results (only if no patterns exist yet)
+    if (!patterns.value || patterns.value.length === 0) {
+      const patternResponse = await fetch('/api/patterns/detect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rubricId: rubric.value.id,
+          minFailCount: 2,
+          minImpactScore: 0.2
+        })
       })
-    })
 
-    if (!patternResponse.ok) {
-      console.warn('Pattern detection failed, but continuing...')
-    } else {
-      const patternData = await patternResponse.json()
-      if (patternData.success) {
-        console.log(`✓ Detected ${patternData.patterns?.length || 0} patterns`)
+      if (!patternResponse.ok) {
+        console.warn('Pattern detection failed, but continuing...')
+      } else {
+        const patternData = await patternResponse.json()
+        if (patternData.success) {
+          console.log(`✓ Detected ${patternData.patterns?.length || 0} patterns`)
+          // Reload patterns to update UI
+          await loadPatterns()
+        }
       }
+    } else {
+      console.log(`ℹ️ Patterns already exist (${patterns.value.length}), skipping detection`)
     }
   } catch (err: any) {
     error.value = err.message
@@ -326,6 +364,7 @@ watch(activeTab, async (newTab) => {
 // Initial load
 loadCalls()
 loadRubric()
+loadPatterns()
 </script>
 
 <template>
