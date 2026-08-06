@@ -14,9 +14,21 @@ import db from '../db/connection.js';
  */
 function validatePayloadShape(payload, shape) {
   for (const [key, expected] of Object.entries(shape)) {
-    const isOptional = expected.endsWith('?');
-    const expectedType = isOptional ? expected.slice(0, -1) : expected;
     const value = payload[key];
+
+    // Enum arrays are stored as actual arrays in payloadShape (e.g. patience_level)
+    if (Array.isArray(expected)) {
+      if (value === undefined) {
+        return { valid: false, reason: `Missing required field: ${key}` };
+      }
+      if (!expected.includes(value)) {
+        return { valid: false, reason: `${key} must be one of: ${expected.join(', ')}` };
+      }
+      continue;
+    }
+
+    const isOptional = typeof expected === 'string' && expected.endsWith('?');
+    const expectedType = isOptional ? expected.slice(0, -1) : expected;
 
     // Optional field can be undefined
     if (isOptional && value === undefined) {
@@ -37,7 +49,7 @@ function validatePayloadShape(payload, shape) {
       if (typeof value !== 'boolean') {
         return { valid: false, reason: `${key} must be boolean` };
       }
-    } else if (expectedType.startsWith('int:')) {
+    } else if (typeof expectedType === 'string' && expectedType.startsWith('int:')) {
       const rangeMatch = expectedType.match(/int:(\d+)\.\.(\d+)/);
       if (!rangeMatch) {
         return { valid: false, reason: `Invalid int range spec: ${expectedType}` };
@@ -46,7 +58,7 @@ function validatePayloadShape(payload, shape) {
       if (!Number.isInteger(value) || value < parseInt(min) || value > parseInt(max)) {
         return { valid: false, reason: `${key} must be integer between ${min} and ${max}` };
       }
-    } else if (expectedType.startsWith('float:')) {
+    } else if (typeof expectedType === 'string' && expectedType.startsWith('float:')) {
       const rangeMatch = expectedType.match(/float:([\d.]+)\.\.([\d.]+)/);
       if (!rangeMatch) {
         return { valid: false, reason: `Invalid float range spec: ${expectedType}` };
@@ -55,7 +67,7 @@ function validatePayloadShape(payload, shape) {
       if (typeof value !== 'number' || value < parseFloat(min) || value > parseFloat(max)) {
         return { valid: false, reason: `${key} must be float between ${min} and ${max}` };
       }
-    } else if (expectedType.startsWith('enum:')) {
+    } else if (typeof expectedType === 'string' && expectedType.startsWith('enum:')) {
       const enumName = expectedType.split(':')[1];
       if (enumName === 'GHL_ACTION_TYPES') {
         if (!GHL_ACTION_TYPES.includes(value)) {
@@ -63,11 +75,6 @@ function validatePayloadShape(payload, shape) {
         }
       } else {
         return { valid: false, reason: `Unknown enum type: ${enumName}` };
-      }
-    } else if (Array.isArray(expectedType)) {
-      // Enum array
-      if (!expectedType.includes(value)) {
-        return { valid: false, reason: `${key} must be one of: ${expectedType.join(', ')}` };
       }
     } else if (expectedType === 'array') {
       if (!Array.isArray(value)) {

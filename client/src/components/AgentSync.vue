@@ -192,7 +192,7 @@ function formatCallDate(dateStr: string) {
       <div class="mb-8">
         <div class="flex items-center justify-between">
           <div>
-            <h1 class="text-3xl font-bold text-gray-900">Voice AI Agents</h1>
+            <h1 class="text-3xl font-bold text-gray-900">Agent Optimizer</h1>
             <p v-if="lastSync" class="text-sm text-gray-600 mt-2">Last synced: {{ formatDate(lastSync) }}</p>
           </div>
           <button

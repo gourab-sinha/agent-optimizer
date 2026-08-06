@@ -58,7 +58,14 @@ Format your response as JSON:
   });
 
   try {
-    return JSON.parse(result.completion);
+    // callLLM returns { content }, not completion
+    const raw = result.content ?? result.completion;
+    // Strip markdown fences if present
+    let cleaned = (raw || '').trim();
+    if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/```json?\n?/g, '').replace(/```\n?$/g, '').trim();
+    }
+    return JSON.parse(cleaned);
   } catch (err) {
     // Fallback if LLM doesn't return valid JSON
     return {
