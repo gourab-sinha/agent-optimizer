@@ -315,6 +315,18 @@ const findingsByStatus = computed(() => {
   return grouped
 })
 
+// Format criterion key for better readability
+function formatCriterionKey(key: string) {
+  // Convert snake_case or camelCase to readable title
+  return key
+    .replace(/_/g, ' ')
+    .replace(/([A-Z])/g, ' $1')
+    .trim()
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
+}
+
 // Watch tab changes
 watch(activeTab, async (newTab) => {
   if (newTab === 'calls' && !calls.value.length) {
@@ -435,7 +447,7 @@ loadPatterns()
                   class="finding-card fail"
                 >
                   <div class="finding-header">
-                    <span class="finding-key">{{ finding.criterion_key }}</span>
+                    <span class="finding-key">{{ formatCriterionKey(finding.criterion_key) }}</span>
                     <span :class="['severity-badge', `severity-${finding.severity}`]">
                       {{ finding.severity === 3 ? '🔴 Critical' : finding.severity === 2 ? '🟡 Important' : '🟢 Polish' }}
                     </span>
@@ -457,7 +469,7 @@ loadPatterns()
                   class="finding-card pass"
                 >
                   <div class="finding-header">
-                    <span class="finding-key">{{ finding.criterion_key }}</span>
+                    <span class="finding-key">{{ formatCriterionKey(finding.criterion_key) }}</span>
                   </div>
                   <p class="finding-rationale">{{ finding.rationale }}</p>
                 </div>
@@ -522,7 +534,7 @@ loadPatterns()
               class="criterion-card"
             >
               <div class="criterion-header">
-                <span class="criterion-key">{{ criterion.key }}</span>
+                <span class="criterion-key">{{ formatCriterionKey(criterion.key) }}</span>
                 <span :class="['severity-badge', `severity-${criterion.severity}`]">
                   {{ criterion.severity === 3 ? '🔴' : criterion.severity === 2 ? '🟡' : '🟢' }}
                 </span>
