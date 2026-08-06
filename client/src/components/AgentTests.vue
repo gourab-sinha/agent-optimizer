@@ -170,7 +170,7 @@
             :key="testCase.id"
             class="test-case-card"
           >
-            <div class="test-case-header">
+            <div class="test-case-header" @click="toggleTestCase(testCase.id)">
               <div class="test-case-title">
                 <input
                   type="checkbox"
@@ -199,7 +199,7 @@
                 >
                   {{ runningTests[testCase.id] ? '⏳ Running...' : '▶️ Run Test' }}
                 </button>
-                <button @click="toggleTestCase(testCase.id)" class="expand-btn">
+                <button @click.stop="toggleTestCase(testCase.id)" class="expand-btn">
                   {{ expandedTests.includes(testCase.id) ? '▼' : '▶' }}
                 </button>
               </div>
@@ -430,13 +430,37 @@ export default {
         const data = await response.json()
         if (data.success) {
           this.testRuns = data.runs
-          // Load latest results for each test case
+          // Load latest results for each test case across ALL runs
           if (data.runs.length > 0) {
-            await this.loadLatestTestResults(data.runs[0].id)
+            await this.loadAllTestResults(data.runs)
           }
         }
       } catch (error) {
         console.error('Failed to load test runs:', error)
+      }
+    },
+
+    async loadAllTestResults(runs) {
+      try {
+        // Load results from ALL runs and keep the most recent result for each test case
+        const resultsMap = {}
+
+        for (const run of runs) {
+          const response = await fetch(`/api/tests/runs/${run.id}/results`)
+          const data = await response.json()
+          if (data.success) {
+            data.results.forEach(result => {
+              // Keep the result if this test case hasn't been seen, or if this run is more recent
+              if (!resultsMap[result.test_case_id]) {
+                resultsMap[result.test_case_id] = result
+              }
+            })
+          }
+        }
+
+        this.testCaseResults = resultsMap
+      } catch (error) {
+        console.error('Failed to load all test results:', error)
       }
     },
 
