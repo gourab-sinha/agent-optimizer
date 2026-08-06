@@ -91,8 +91,9 @@
             </div>
             <div class="run-stats">
               <div class="run-stat">
-                <span class="stat-label">Tests:</span>
+                <span class="stat-label">Runs:</span>
                 <span class="stat-value">{{ run.total_tests || 0 }}</span>
+                <span class="stat-detail">({{ run.runs_per_case || 1 }}x {{ Math.ceil((run.total_tests || 0) / (run.runs_per_case || 1)) }} tests)</span>
               </div>
               <div class="run-stat">
                 <span class="stat-label">Passed:</span>
@@ -953,6 +954,12 @@ export default {
 
 .run-stat .stat-value.error {
   color: #ef4444;
+}
+
+.run-stat .stat-detail {
+  font-size: 11px;
+  color: #9ca3af;
+  margin-left: 4px;
 }
 
 .section-header {

@@ -250,12 +250,19 @@ async function runSingleTest(agent, agentPrompt, testCase, criteria, testRunId, 
 /**
  * Simulate a conversation between caller (persona) and agent
  * Uses LLM to generate realistic dialogue
+ * IMPORTANT: Simulates realistic agent behavior including potential failures
  */
 async function simulateConversation(agentPrompt, persona, scenario) {
   const prompt = `You are simulating a phone conversation for testing a voice AI agent.
 
-AGENT PROMPT (how the agent should behave):
-${agentPrompt.substring(0, 3000)}
+CRITICAL INSTRUCTIONS:
+- The agent is NOT perfect and may struggle with challenging scenarios
+- The agent may make mistakes, miss cues, or fail to handle edge cases
+- Generate a REALISTIC conversation, not an ideal one
+- If the scenario is difficult (impatient caller, interruptions, etc), the agent should struggle
+
+AGENT PROMPT (how the agent SHOULD behave, but may not always):
+${agentPrompt}
 
 CALLER PERSONA:
 Name: ${persona.name}
@@ -274,8 +281,14 @@ Start with the agent greeting the caller.
 The conversation should:
 1. Follow the scenario realistically
 2. Reflect the caller's communication style and personality
-3. Test how well the agent follows their prompt
+3. Test how well the agent follows their prompt (they may NOT follow it perfectly!)
 4. Include natural dialogue flow with appropriate transitions
+5. **IMPORTANT**: If the caller is challenging (impatient, interrupts, confused, etc), the agent should show realistic struggle:
+   - May not greet properly if interrupted
+   - May use filler words under pressure
+   - May forget to collect all information
+   - May fail to handle objections smoothly
+   - May not maintain perfect tone when stressed
 
 IMPORTANT: Respond with valid JSON in this exact structure:
 {
@@ -289,10 +302,10 @@ IMPORTANT: Respond with valid JSON in this exact structure:
 
   const result = await callLLM({
     prompt,
-    systemPrompt: 'You generate realistic phone conversation simulations for testing voice AI agents. Output valid JSON only.',
+    systemPrompt: 'You generate realistic phone conversation simulations for testing voice AI agents. Be realistic about agent limitations and failures in challenging scenarios. Output valid JSON only.',
     stage: 'test_execution',
-    temperature: 0.8,
-    maxTokens: 2000,
+    temperature: 0.9, // Higher temperature for more realistic variation/failures
+    maxTokens: 16000,
     responseFormat: 'json'
   });
 
@@ -329,7 +342,7 @@ async function evaluateCriterion(conversation, criterion, agentPrompt) {
   const prompt = `You are evaluating a voice AI agent's conversation against a specific criterion.
 
 AGENT PROMPT (how agent should behave):
-${agentPrompt.substring(0, 2000)}
+${agentPrompt}
 
 CRITERION TO EVALUATE:
 Key: ${criterion.key}
@@ -355,7 +368,7 @@ Respond with JSON:
     systemPrompt: 'You evaluate voice AI agent performance against specific criteria. Output valid JSON only.',
     stage: 'test_evaluation',
     temperature: 0.3, // Lower temperature for more consistent evaluations
-    maxTokens: 400,
+    maxTokens: 16000,
     responseFormat: 'json'
   });
 

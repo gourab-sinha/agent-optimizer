@@ -93,7 +93,8 @@ export async function generateTestCases(agentId, options = {}) {
   // Get existing patterns (for edge case generation)
   const patternsResult = await db.query(
     `SELECT p.id, p.title, p.description, p.criterion_id,
-            rc.key as criterion_key, rc.description as criterion_description
+            rc.key as criterion_key, rc.description as criterion_description,
+            p.impact_score, p.call_count
      FROM issue_patterns p
      JOIN rubric_criteria rc ON p.criterion_id = rc.id
      WHERE p.agent_version_id = $1 AND p.is_deleted = false
@@ -104,6 +105,23 @@ export async function generateTestCases(agentId, options = {}) {
 
   const patterns = patternsResult.rows;
   console.log(`   ✓ Found ${patterns.length} failure patterns for edge cases`);
+
+  // Get actual failing calls with findings for context
+  const findingsResult = await db.query(
+    `SELECT f.id, f.call_id, f.status, f.rationale, f.confidence,
+            rc.key as criterion_key, rc.description as criterion_description,
+            c.summary as call_summary
+     FROM findings f
+     JOIN rubric_criteria rc ON f.criterion_id = rc.id
+     JOIN calls c ON f.call_id = c.id
+     WHERE f.rubric_id = $1 AND f.status = 'fail' AND f.is_deleted = false
+     ORDER BY f.confidence DESC, f.created_at DESC
+     LIMIT 20`,
+    [rubricId]
+  );
+
+  const failingFindings = findingsResult.rows;
+  console.log(`   ✓ Found ${failingFindings.length} actual failures to learn from`);
 
   // Generate happy path test cases
   const happyPathCases = [];
@@ -117,8 +135,12 @@ export async function generateTestCases(agentId, options = {}) {
   const edgeCases = [];
   for (const pattern of patterns.slice(0, 5)) { // Max 5 patterns
     console.log(`\n   → Generating edge cases for pattern: ${pattern.title}...`);
+
+    // Get findings related to this pattern's criterion
+    const relatedFindings = failingFindings.filter(f => f.criterion_key === pattern.criterion_key).slice(0, 3);
+
     for (let i = 0; i < edgeCaseCount; i++) {
-      const testCase = await generateEdgeCase(agent, agentPrompt, pattern, criteria);
+      const testCase = await generateEdgeCase(agent, agentPrompt, pattern, criteria, relatedFindings);
       edgeCases.push(testCase);
     }
   }
@@ -237,7 +259,18 @@ Format as JSON:
  * Generate an edge case test case from a failure pattern
  * Tests specific scenarios where agent has failed before
  */
-async function generateEdgeCase(agent, agentPrompt, pattern, criteria) {
+async function generateEdgeCase(agent, agentPrompt, pattern, criteria, relatedFindings = []) {
+  // Build findings context to show real failures
+  let findingsContext = '';
+  if (relatedFindings.length > 0) {
+    findingsContext = '\n\nREAL FAILURE EXAMPLES:\n';
+    relatedFindings.forEach((finding, idx) => {
+      findingsContext += `${idx + 1}. ${finding.call_summary}\n`;
+      findingsContext += `   WHY IT FAILED: ${finding.rationale}\n`;
+      findingsContext += `   Confidence: ${Math.round(finding.confidence * 100)}%\n`;
+    });
+  }
+
   const prompt = `You are generating an edge-case test for a voice AI agent that has a known failure pattern.
 
 AGENT PROMPT:
@@ -247,12 +280,20 @@ KNOWN FAILURE PATTERN:
 - Title: ${pattern.title}
 - Description: ${pattern.description}
 - Failing Criterion: ${pattern.criterion_key} - ${pattern.criterion_description}
+- Impact: ${pattern.call_count} calls affected (${Math.round(pattern.impact_score * 100)}% impact)
+${findingsContext}
+
+IMPORTANT: Create a test case that will LIKELY FAIL based on the real failures above.
+- Study the real failure examples carefully
+- Mimic the conditions that caused those failures
+- Make the scenario challenging enough that the agent will struggle
+- The goal is to TEST if the agent can handle its known weaknesses
 
 Generate a test case that specifically challenges this weakness:
-1. **Caller Persona**: Create a challenging but realistic caller
+1. **Caller Persona**: Create a challenging but realistic caller (based on real failures)
 2. **Scenario**: Design a situation that exposes this failure pattern
-3. **Challenge**: What makes this difficult for the agent
-4. **Success Criteria**: What the agent must do to pass
+3. **Challenge**: What makes this difficult (mirror the real failures)
+4. **Success Criteria**: What the agent must do to pass (the failing criterion)
 
 Format as JSON:
 {
