@@ -1,10 +1,50 @@
 import db from '../db/connection.js';
 import { listCalls, getCall } from '../ghl/calls.js';
+import { parseTranscript, generateTurnId, isValidTurn } from '../utils/transcriptParser.js';
 
 /**
  * Call Sync Service
  * Syncs call logs from HighLevel API to local database
  */
+
+/**
+ * Insert call turns into the database
+ *
+ * @param {string} callId - The call ID
+ * @param {Array} turns - Array of parsed turn objects
+ * @returns {Promise<Array>} Inserted turns
+ */
+async function insertCallTurns(callId, turns) {
+  const insertedTurns = [];
+
+  for (const turn of turns) {
+    if (!isValidTurn(turn)) {
+      console.warn(`[Call Turns] Skipping invalid turn:`, turn);
+      continue;
+    }
+
+    const turnId = generateTurnId(callId, turn.idx);
+
+    try {
+      const result = await db.query(
+        `INSERT INTO call_turns (id, call_id, idx, speaker, text)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (call_id, idx) DO UPDATE SET
+           speaker = $4,
+           text = $5,
+           updated_at = CURRENT_TIMESTAMP
+         RETURNING *`,
+        [turnId, callId, turn.idx, turn.speaker, turn.text]
+      );
+
+      insertedTurns.push(result.rows[0]);
+    } catch (error) {
+      console.error(`[Call Turns] Failed to insert turn ${turnId}:`, error.message);
+    }
+  }
+
+  return insertedTurns;
+}
 
 /**
  * Sync calls for a specific agent
@@ -82,7 +122,20 @@ export async function syncAgentCalls(locationId, agentId, options = {}) {
       ]
     );
 
-    syncedCalls.push(result.rows[0]);
+    const syncedCall = result.rows[0];
+    syncedCalls.push(syncedCall);
+
+    // Parse transcript and create call_turns entries
+    if (call.transcript) {
+      console.log(`[Call Sync] Parsing transcript for call ${call.id}...`);
+      const turns = parseTranscript(call.transcript);
+      console.log(`[Call Sync] Parsed ${turns.length} turns from transcript`);
+
+      if (turns.length > 0) {
+        const insertedTurns = await insertCallTurns(call.id, turns);
+        console.log(`[Call Sync] Inserted ${insertedTurns.length} call turns for call ${call.id}`);
+      }
+    }
   }
 
   console.log(`Synced ${syncedCalls.length} calls to database`);
