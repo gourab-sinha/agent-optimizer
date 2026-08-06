@@ -72,7 +72,7 @@
             <h4>Expected to Improve:</h4>
             <ul class="criteria-list">
               <li v-for="criterion in rec.expectedCriteria" :key="criterion.id">
-                {{ criterion.name || criterion.key }}
+                {{ criterion.description || criterion.key }}
               </li>
             </ul>
           </div>

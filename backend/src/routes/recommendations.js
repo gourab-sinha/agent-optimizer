@@ -69,18 +69,22 @@ router.get('/agent/:agentId', async (req, res) => {
     // Get pattern details for each recommendation
     const recommendations = await Promise.all(
       result.rows.map(async (rec) => {
-        // Get linked patterns
+        // Get linked patterns with criterion key
         const patterns = await db.query(
-          `SELECT id, title, criterion_key
-           FROM issue_patterns
-           WHERE id = ANY($1)
-             AND is_deleted = false`,
+          `SELECT
+             p.id,
+             p.title,
+             c.key as criterion_key
+           FROM issue_patterns p
+           LEFT JOIN rubric_criteria c ON p.criterion_id = c.id
+           WHERE p.id = ANY($1)
+             AND p.is_deleted = false`,
           [rec.linked_pattern_ids || []]
         );
 
         // Get expected criteria
         const criteria = await db.query(
-          `SELECT id, key, name
+          `SELECT id, key, description
            FROM rubric_criteria
            WHERE id = ANY($1)
              AND is_deleted = false`,
