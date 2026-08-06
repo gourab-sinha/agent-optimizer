@@ -1,4 +1,5 @@
 import queries from '../db/queries.js';
+import db from '../db/connection.js';
 
 /**
  * Agent Service
@@ -32,7 +33,7 @@ export async function createAgent(data) {
 /**
  * Get agent by ID
  * @param {string} id - Agent ID
- * @returns {Promise<Object>} Agent data
+ * @returns {Promise<Object>} Agent data with latest version ID
  */
 export async function getAgentById(id) {
   const agent = await queries.getAgentById(id);
@@ -41,7 +42,22 @@ export async function getAgentById(id) {
     throw new Error(`Agent ${id} not found`);
   }
 
-  return agent;
+  // Get latest agent version
+  const versionResult = await db.query(
+    `SELECT id FROM agent_versions
+     WHERE agent_id = $1 AND is_deleted = false
+     ORDER BY created_at DESC LIMIT 1`,
+    [id]
+  );
+
+  const latestVersionId = versionResult.rows.length > 0
+    ? versionResult.rows[0].id
+    : null;
+
+  return {
+    ...agent,
+    latestVersionId
+  };
 }
 
 /**

@@ -26,6 +26,7 @@ router.use('/oauth', oauthRoutes);
 
 // Entity routes
 router.use('/locations', locationRoutes);
+router.use('/agents', agentRoutes);
 router.use('/agents', agentSyncRoutes);
 router.use('/calls', callRoutes);
 
