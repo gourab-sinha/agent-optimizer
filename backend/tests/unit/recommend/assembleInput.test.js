@@ -38,6 +38,13 @@ describe('recommend/assembleInput', () => {
                 welcomeMessage: 'Hi',
                 patienceLevel: 'low',
                 maxCallDuration: 300,
+                model: 'gpt-4o',
+                temperature: 0.7,
+                voiceId: 'voice-123',
+                language: 'en-US',
+                endCallFunctionEnabled: true,
+                knowledgeBase: { id: 'kb-123' },
+                transferNumbers: ['+1234567890'],
               },
               actions: [
                 {
@@ -115,6 +122,16 @@ describe('recommend/assembleInput', () => {
     const result = await assembleInput('av-1');
     expect(result.agent.agentId).toBe('agent-1');
     expect(result.agent.actions[0].actionId).toBe('act-1');
+
+    // Verify new agent config fields are extracted
+    expect(result.agent.model).toBe('gpt-4o');
+    expect(result.agent.temperature).toBe(0.7);
+    expect(result.agent.voiceId).toBe('voice-123');
+    expect(result.agent.language).toBe('en-US');
+    expect(result.agent.endCallFunctionEnabled).toBe(true);
+    expect(result.agent.knowledgeBase).toEqual({ id: 'kb-123' });
+    expect(result.agent.transferNumbers).toEqual(['+1234567890']);
+
     expect(result.patterns).toHaveLength(1);
     expect(result.patterns[0].evidence[0]).toMatch(/\.\.\.$/);
     expect(result.testResults.cases[0].flaky).toBe(true);

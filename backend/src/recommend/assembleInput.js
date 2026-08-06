@@ -40,16 +40,41 @@ async function getAgentConfig(agentVersionId) {
 
   return {
     agentId: version.agent_id,
+    // Core prompt and messages
     prompt: config.agentPrompt || '',
     welcomeMessage: config.welcomeMessage || '',
+
+    // Model configuration
+    model: config.model || '',
+    temperature: config.temperature !== undefined ? config.temperature : null,
+
+    // Call behavior settings
     patienceLevel: config.patienceLevel || 'medium',
     maxCallDuration: config.maxCallDuration || 600,
+    endCallFunctionEnabled: config.endCallFunctionEnabled || false,
+
+    // Voice and language
+    voiceId: config.voiceId || '',
+    language: config.language || '',
+
+    // Knowledge base
+    knowledgeBase: config.knowledgeBase || null,
+
+    // Transfer settings
+    transferNumbers: config.transferNumbers || [],
+
+    // Actions
     actions: actions.map(a => ({
       actionId: a.id || a.actionId, // HighLevel uses 'id', internal uses 'actionId'
       actionType: a.actionType,
       actionName: a.name || a.actionName,
       actionParameters: a.actionParameters || {}
-    }))
+    })),
+
+    // Additional settings that might be useful
+    recordingEnabled: config.recordingEnabled !== undefined ? config.recordingEnabled : true,
+    enableVoicemailDetection: config.enableVoicemailDetection || false,
+    waitForGreeting: config.waitForGreeting || false
   };
 }
 
@@ -284,7 +309,7 @@ export async function assembleInput(agentVersionId) {
     getCriterionIds(agentVersionId)
   ]);
 
-  console.log(`   ✓ Agent config: ${agent.actions.length} actions`);
+  console.log(`   ✓ Agent config: model=${agent.model || 'default'}, temp=${agent.temperature ?? 'default'}, ${agent.actions.length} actions, KB=${agent.knowledgeBase ? 'yes' : 'no'}`);
   console.log(`   ✓ Patterns: ${patterns.length} (top by impact)`);
   console.log(`   ✓ Test results: ${testResults ? testResults.cases.length + ' cases' : 'none yet'}`);
   console.log(`   ✓ Criteria: ${Object.keys(criterionIds).length} enabled`);

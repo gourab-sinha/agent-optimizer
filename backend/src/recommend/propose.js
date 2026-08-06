@@ -126,8 +126,23 @@ ${agent.prompt}
 """
 
 Welcome Message: "${agent.welcomeMessage}"
-Patience Level: ${agent.patienceLevel}
-Max Call Duration: ${agent.maxCallDuration}s
+
+Model Settings:
+  Model: ${agent.model || 'default'}
+  Temperature: ${agent.temperature !== null && agent.temperature !== undefined ? agent.temperature : 'default'}
+  Voice ID: ${agent.voiceId || 'default'}
+  Language: ${agent.language || 'default'}
+
+Call Behavior:
+  Patience Level: ${agent.patienceLevel}
+  Max Call Duration: ${agent.maxCallDuration}s
+  End Call Function: ${agent.endCallFunctionEnabled ? 'enabled' : 'disabled'}
+  Voicemail Detection: ${agent.enableVoicemailDetection ? 'enabled' : 'disabled'}
+  Wait For Greeting: ${agent.waitForGreeting ? 'yes' : 'no'}
+
+Knowledge Base: ${agent.knowledgeBase ? 'configured' : 'none'}
+
+Transfer Numbers: ${agent.transferNumbers && agent.transferNumbers.length > 0 ? agent.transferNumbers.join(', ') : 'none'}
 
 Actions:
 ${actionsText}
