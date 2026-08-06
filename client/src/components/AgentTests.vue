@@ -91,9 +91,8 @@
             </div>
             <div class="run-stats">
               <div class="run-stat">
-                <span class="stat-label">Runs:</span>
+                <span class="stat-label">Tests:</span>
                 <span class="stat-value">{{ run.total_tests || 0 }}</span>
-                <span class="stat-detail">({{ run.runs_per_case || 1 }}x {{ Math.ceil((run.total_tests || 0) / (run.runs_per_case || 1)) }} tests)</span>
               </div>
               <div class="run-stat">
                 <span class="stat-label">Passed:</span>
@@ -501,7 +500,7 @@ export default {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             agentId: this.agentId,
-            runsPerCase: 2,
+            runsPerCase: 1,
             trigger: 'manual'
           })
         })
@@ -539,7 +538,7 @@ export default {
           body: JSON.stringify({
             agentId: this.agentId,
             testCaseIds: [testCaseId],
-            runsPerCase: 2,
+            runsPerCase: 1,
             trigger: 'manual'
           })
         })
@@ -579,7 +578,7 @@ export default {
           body: JSON.stringify({
             agentId: this.agentId,
             testCaseIds: this.selectedTests,
-            runsPerCase: 2,
+            runsPerCase: 1,
             trigger: 'manual'
           })
         })

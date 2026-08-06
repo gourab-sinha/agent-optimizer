@@ -12,14 +12,14 @@ import { callLLM } from './llmService.js';
  * @param {string} agentId - Agent ID
  * @param {Object} options - Run options
  * @param {string[]} options.testCaseIds - Specific test case IDs to run (optional, runs all if not provided)
- * @param {number} options.runsPerCase - Number of times to run each test case (default: 3)
+ * @param {number} options.runsPerCase - Number of times to run each test case (default: 1)
  * @param {string} options.trigger - Trigger type: 'manual', 'verify_before', 'verify_after'
  * @returns {Promise<Object>} Test run results
  */
 export async function runTests(agentId, options = {}) {
   const {
     testCaseIds = null,
-    runsPerCase = 3,
+    runsPerCase = 1,
     trigger = 'manual'
   } = options;
 

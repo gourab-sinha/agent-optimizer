@@ -34,10 +34,10 @@ async function testRunner() {
     // Step 2: Run tests
     console.log('\n🚀 Step 2: Running tests...');
     console.log('   This will simulate conversations and evaluate the agent');
-    console.log('   Each test case will run 2 times for consistency');
+    console.log('   Each test case will run once');
 
     const result = await testRunnerService.runTests(AGENT_ID, {
-      runsPerCase: 2,  // Run each test 2 times
+      runsPerCase: 1,  // Run each test once
       trigger: 'manual'
     });
 
