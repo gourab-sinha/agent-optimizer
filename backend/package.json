@@ -19,6 +19,7 @@
   "license": "ISC",
   "dependencies": {
     "@gohighlevel/api-client": "^3.0.0",
+    "anthropic": "^0.0.0",
     "axios": "^1.19.0",
     "compression": "^1.8.1",
     "cors": "^2.8.6",
@@ -29,6 +30,7 @@
     "helmet": "^8.3.0",
     "morgan": "^1.11.0",
     "nodemon": "^3.1.14",
+    "openai": "^7.4.0",
     "pg": "^8.22.0"
   }
 }
