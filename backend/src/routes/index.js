@@ -4,6 +4,7 @@ import agentRoutes from './agentRoutes.js';
 import agentSyncRoutes from './agentSyncRoutes.js';
 import callRoutes from './callRoutes.js';
 import oauthRoutes from './oauthRoutes.js';
+import analysisRoutes from './analysisRoutes.js';
 
 const router = express.Router();
 
@@ -17,6 +18,7 @@ const router = express.Router();
  * - *      /api/locations/*
  * - *      /api/agents/*
  * - *      /api/calls/*
+ * - *      /api/analysis/*
  */
 
 // OAuth routes
@@ -26,6 +28,9 @@ router.use('/oauth', oauthRoutes);
 router.use('/locations', locationRoutes);
 router.use('/agents', agentSyncRoutes);
 router.use('/calls', callRoutes);
+
+// Analysis routes
+router.use('/analysis', analysisRoutes);
 
 // 404 handler for API routes
 router.use((req, res) => {
