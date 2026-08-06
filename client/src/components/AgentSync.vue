@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import AgentAnalysis from './AgentAnalysis.vue'
+import AgentMetrics from './AgentMetrics.vue'
 
 const locationId = ref('')
 const agents = ref<any[]>([])
@@ -414,9 +415,12 @@ function formatCallDate(dateStr: string) {
                 </div>
 
                 <!-- Metrics Tab -->
-                <div v-if="getAgentTab(agent.id) === 'metrics'" class="bg-white rounded-xl p-12 text-center">
-                  <p class="text-lg font-medium text-gray-900 mb-2">📊 Metrics Coming Soon</p>
-                  <p class="text-sm text-gray-500">Pattern detection and performance metrics will appear here</p>
+                <div v-if="getAgentTab(agent.id) === 'metrics'" class="bg-white rounded-xl">
+                  <AgentMetrics
+                    :agent-id="agent.id"
+                    :agent-name="agent.name"
+                    :location-id="locationId"
+                  />
                 </div>
               </div>
             </div>
