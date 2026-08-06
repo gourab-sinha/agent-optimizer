@@ -26,7 +26,7 @@ export * from './recTypes.js';
  * @returns {Promise<Object>}
  */
 export async function generateRecommendations(agentVersionId, options = {}) {
-  const { force = false, singleShot = false, patternLimit = 6 } = options;
+  const { force = false, singleShot = false, patternLimit = 10 } = options;
 
   console.log(`\n${'='.repeat(80)}`);
   console.log(`📊 Generating Recommendations for Agent Version ${agentVersionId}`);

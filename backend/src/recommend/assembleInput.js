@@ -74,7 +74,7 @@ async function getAgentConfig(agentVersionId) {
 /**
  * Top patterns with criterion metadata, rationales, and turn evidence
  */
-async function getTopPatterns(agentVersionId, limit = 6) {
+async function getTopPatterns(agentVersionId, limit = 10) {
   const result = await db.query(
     `SELECT
        p.id,
@@ -370,7 +370,7 @@ function assessReadiness(patterns, testResults, criterionIds) {
  * @returns {Promise<Object>}
  */
 export async function assembleInput(agentVersionId, options = {}) {
-  const patternLimit = options.patternLimit ?? 6;
+  const patternLimit = options.patternLimit ?? 10;
 
   console.log(`\n📋 Assembling input for agent version ${agentVersionId}`);
 
