@@ -26,9 +26,15 @@ describe('validate range edge cases via temporary REC_TYPES mutation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     db.query.mockImplementation(async (sql) => {
-      if (sql.includes('issue_patterns')) return { rows: [{ id: patternId }] };
+      if (sql.includes('issue_patterns')) {
+        return { rows: [{ id: patternId, criterion_id: criterionId }] };
+      }
       if (sql.includes('rubric_criteria')) return { rows: [{ id: criterionId }] };
       if (sql.includes('test_cases')) return { rows: [] };
+      if (sql.includes('FROM recommendations') && sql.includes('SELECT')) {
+        return { rows: [] };
+      }
+      if (sql.includes('INSERT INTO recommendations')) return { rows: [] };
       return { rows: [] };
     });
   });

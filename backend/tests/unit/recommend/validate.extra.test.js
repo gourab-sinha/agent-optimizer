@@ -21,9 +21,14 @@ describe('recommend/validate extra branches', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     db.query.mockImplementation(async (sql) => {
-      if (sql.includes('issue_patterns')) return { rows: [{ id: patternId }] };
+      if (sql.includes('issue_patterns')) {
+        return { rows: [{ id: patternId, criterion_id: criterionId }] };
+      }
       if (sql.includes('rubric_criteria')) return { rows: [{ id: criterionId }] };
       if (sql.includes('test_cases')) return { rows: [] };
+      if (sql.includes('FROM recommendations') && sql.includes('SELECT')) {
+        return { rows: [] };
+      }
       if (sql.includes('INSERT INTO recommendations')) return { rows: [] };
       return { rows: [] };
     });
@@ -32,7 +37,7 @@ describe('recommend/validate extra branches', () => {
   function base(overrides = {}) {
     return {
       recType: 'guardrail',
-      payload: { promptAddition: 'Be careful' },
+      payload: { promptAddition: 'Be careful unique addition' },
       rationale: 'r',
       linkedPatternIds: [patternId],
       expectedCriterionIds: [criterionId],
@@ -62,7 +67,7 @@ describe('recommend/validate extra branches', () => {
           recType: 'escalation_rule',
           payload: {
             trigger: 'angry',
-            promptAddition: 'Escalate',
+            promptAddition: 'Escalate politely now',
             transferAction: { name: 'Human' },
           },
         }),

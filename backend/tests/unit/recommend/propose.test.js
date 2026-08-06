@@ -10,15 +10,26 @@ import { proposeRecommendations } from '../../../src/recommend/propose.js';
 describe('recommend/propose', () => {
   const input = {
     agent: {
-      prompt: 'Be helpful',
+      prompt: 'Be helpful. Always respect opt-out requests.',
       welcomeMessage: 'Hi',
       patienceLevel: 'medium',
       maxCallDuration: 600,
+      model: 'gpt',
+      temperature: 0.5,
+      voiceId: 'v',
+      language: 'en',
+      endCallFunctionEnabled: false,
+      enableVoicemailDetection: false,
+      waitForGreeting: false,
+      knowledgeBase: null,
+      transferNumbers: [],
       actions: [
         {
           actionId: 'a1',
           actionType: 'APPOINTMENT_BOOKING',
           actionName: 'Book',
+          instructions: 'When ready',
+          actionParameters: {},
         },
       ],
     },
@@ -27,16 +38,21 @@ describe('recommend/propose', () => {
         id: 'p1',
         title: 'Missed booking',
         description: 'Fails to book',
+        criterionId: 'c1',
         criterionKey: 'books_appt',
+        criterionSeverity: 3,
+        criterionCategory: 'tools',
         failCount: 5,
         callCount: 10,
         impactScore: 0.8,
-        evidence: ['Agent never confirmed time'],
+        rationales: ['Never confirmed time'],
+        evidence: ['Agent: ok bye'],
       },
     ],
     testResults: {
       runId: 'run-1',
       runsPerCase: 2,
+      summary: { total: 1, failing: 1, passing: 0, overallPassRate: 0.5 },
       cases: [
         {
           id: 'tc1',
@@ -54,8 +70,9 @@ describe('recommend/propose', () => {
         },
       ],
     },
+    priorRecommendations: [],
     constraints: {
-      recTypes: ['action_update', 'prompt_patch'],
+      recTypes: ['action_update', 'prompt_patch', 'guardrail'],
       actionTypes: ['APPOINTMENT_BOOKING'],
       criterionIds: { books_appt: 'c1' },
     },
@@ -65,54 +82,121 @@ describe('recommend/propose', () => {
     vi.clearAllMocks();
   });
 
-  it('parses JSON array proposals', async () => {
-    callLLM.mockResolvedValue({
-      content: JSON.stringify([
-        {
-          recType: 'action_update',
-          payload: { actionId: 'a1', changes: {} },
-          rationale: 'fix',
-          linkedPatternIds: ['p1'],
-          expectedCriterionIds: ['c1'],
-          supportingTestCaseIds: [],
-        },
-      ]),
-      usage: { completionTokens: 100 },
-    });
+  it('two-phase diagnose then expand', async () => {
+    callLLM
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          strategies: [
+            {
+              patternId: 'p1',
+              recType: 'action_update',
+              rootCause: 'Weak tool trigger',
+              confidence: 0.85,
+              risk: 'medium',
+              primaryCriterionId: 'c1',
+            },
+          ],
+        }),
+        usage: { completionTokens: 50 },
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          recommendations: [
+            {
+              recType: 'action_update',
+              payload: {
+                actionId: 'a1',
+                changes: { instructions: 'Book when confirmed' },
+              },
+              rationale: 'Fix booking',
+              linkedPatternIds: ['p1'],
+              expectedCriterionIds: ['c1'],
+              supportingTestCaseIds: [],
+              confidence: 0.85,
+              risk: 'medium',
+            },
+          ],
+        }),
+        usage: { completionTokens: 100 },
+      });
 
     const proposals = await proposeRecommendations(input);
     expect(proposals).toHaveLength(1);
     expect(proposals[0].recType).toBe('action_update');
-    expect(callLLM).toHaveBeenCalledWith(
-      expect.objectContaining({ stage: 'recommend', temperature: 0.3 })
-    );
+    expect(callLLM).toHaveBeenCalledTimes(2);
   });
 
-  it('strips markdown fences and unwraps recommendations key', async () => {
+  it('falls back to single-shot when diagnose empty', async () => {
+    callLLM
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ strategies: [] }),
+        usage: { completionTokens: 10 },
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          recommendations: [
+            {
+              recType: 'guardrail',
+              payload: { promptAddition: 'Always confirm' },
+              rationale: 'x',
+              linkedPatternIds: ['p1'],
+              expectedCriterionIds: ['c1'],
+            },
+          ],
+        }),
+        usage: { completionTokens: 20 },
+      });
+
+    const proposals = await proposeRecommendations(input);
+    expect(proposals[0].recType).toBe('guardrail');
+  });
+
+  it('singleShot option skips diagnose', async () => {
     callLLM.mockResolvedValue({
       content:
-        '```json\n{"recommendations":[{"recType":"prompt_patch","payload":{"newPrompt":"x"}}]}\n```',
-      usage: { completionTokens: 50 },
+        '```json\n{"recommendations":[{"recType":"prompt_edit","payload":{"find":"Be helpful","replace":"Be very helpful"},"linkedPatternIds":["p1"],"expectedCriterionIds":["c1"]}]}\n```',
+      usage: { completionTokens: 30 },
     });
-    const proposals = await proposeRecommendations(input);
-    expect(proposals).toHaveLength(1);
-    expect(proposals[0].recType).toBe('prompt_patch');
+    const proposals = await proposeRecommendations(input, { singleShot: true });
+    expect(proposals[0].recType).toBe('prompt_edit');
+    expect(callLLM).toHaveBeenCalledTimes(1);
   });
 
-  it('wraps single object into array', async () => {
-    callLLM.mockResolvedValue({
-      content: JSON.stringify({
-        recType: 'guardrail',
-        payload: { promptAddition: 'x' },
-      }),
-      usage: { completionTokens: 20 },
-    });
+  it('retries once on invalid JSON then succeeds', async () => {
+    callLLM
+      .mockResolvedValueOnce({ content: 'not-json', usage: { completionTokens: 1 } })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          strategies: [
+            {
+              patternId: 'p1',
+              recType: 'guardrail',
+              confidence: 0.7,
+              primaryCriterionId: 'c1',
+            },
+          ],
+        }),
+        usage: { completionTokens: 10 },
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          recommendations: [
+            {
+              recType: 'guardrail',
+              payload: { promptAddition: 'X' },
+              linkedPatternIds: ['p1'],
+              expectedCriterionIds: ['c1'],
+            },
+          ],
+        }),
+        usage: { completionTokens: 10 },
+      });
+
     const proposals = await proposeRecommendations(input);
-    expect(Array.isArray(proposals)).toBe(true);
     expect(proposals).toHaveLength(1);
   });
 
-  it('handles null testResults and empty actions', async () => {
+  it('handles null testResults and empty actions in singleShot', async () => {
     callLLM.mockResolvedValue({
       content: '[]',
       usage: { completionTokens: 1 },
@@ -121,40 +205,9 @@ describe('recommend/propose', () => {
       ...input,
       agent: { ...input.agent, actions: [] },
       testResults: null,
-      patterns: [
-        {
-          ...input.patterns[0],
-          evidence: [],
-        },
-      ],
+      patterns: [{ ...input.patterns[0], evidence: [], rationales: [] }],
     };
-    const proposals = await proposeRecommendations(sparse);
+    const proposals = await proposeRecommendations(sparse, { singleShot: true });
     expect(proposals).toEqual([]);
-  });
-
-  it('handles all-passing test results text path', async () => {
-    callLLM.mockResolvedValue({
-      content: '[]',
-      usage: { completionTokens: 1 },
-    });
-    await proposeRecommendations({
-      ...input,
-      testResults: {
-        runId: 'r',
-        runsPerCase: 1,
-        cases: [{ id: 't', title: 'ok', passRate: 1, flaky: false, failedCriteria: [] }],
-      },
-    });
-    expect(callLLM).toHaveBeenCalled();
-  });
-
-  it('throws on invalid JSON', async () => {
-    callLLM.mockResolvedValue({
-      content: 'not-json',
-      usage: { completionTokens: 1 },
-    });
-    await expect(proposeRecommendations(input)).rejects.toThrow(
-      'LLM returned invalid JSON'
-    );
   });
 });

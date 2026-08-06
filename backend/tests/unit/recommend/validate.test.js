@@ -29,14 +29,17 @@ describe('recommend/validate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     db.query.mockImplementation(async (sql) => {
-      if (sql.includes('issue_patterns')) {
-        return { rows: [{ id: patternId }] };
+      if (sql.includes('FROM issue_patterns') || sql.includes('issue_patterns')) {
+        return { rows: [{ id: patternId, criterion_id: criterionId }] };
       }
       if (sql.includes('rubric_criteria')) {
         return { rows: [{ id: criterionId }] };
       }
       if (sql.includes('test_cases')) {
         return { rows: [{ id: testCaseId }] };
+      }
+      if (sql.includes('FROM recommendations') && sql.includes('SELECT')) {
+        return { rows: [] }; // existing fingerprints
       }
       if (sql.includes('INSERT INTO recommendations')) {
         return { rows: [], rowCount: 1 };
@@ -221,7 +224,7 @@ describe('recommend/validate', () => {
           recType: 'action_add',
           payload: {
             actionType: 'WEBHOOK',
-            name: 'X',
+            actionName: 'X', // alias should normalize to name
             actionParameters: {},
           },
         }),
@@ -284,13 +287,15 @@ describe('recommend/validate', () => {
     expect(result.rejected[0].reason).toMatch(/not found/);
   });
 
-  it('rejects empty/unknown expectedCriterionIds', async () => {
+  it('auto-fills empty expectedCriterionIds from linked pattern; rejects unknown ids', async () => {
     let result = await validateAndInsert(
       [baseProposal({ expectedCriterionIds: [] })],
       agentVersionId,
       agentConfig
     );
-    expect(result.rejected[0].reason).toMatch(/expectedCriterionIds/);
+    // Coherence repair: pull criterion from linked pattern
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0].expectedCriterionIds).toContain(criterionId);
 
     result = await validateAndInsert(
       [baseProposal({ expectedCriterionIds: ['missing'] })],
@@ -415,5 +420,60 @@ describe('recommend/validate', () => {
       agentConfig
     );
     expect(result.accepted).toHaveLength(1);
+  });
+
+  it('accepts prompt_edit when find exists', async () => {
+    const result = await validateAndInsert(
+      [
+        baseProposal({
+          recType: 'prompt_edit',
+          payload: {
+            find: 'You are helpful',
+            replace: 'You are extremely helpful',
+          },
+        }),
+      ],
+      agentVersionId,
+      agentConfig
+    );
+    expect(result.accepted).toHaveLength(1);
+  });
+
+  it('rejects prompt_edit when find missing', async () => {
+    const result = await validateAndInsert(
+      [
+        baseProposal({
+          recType: 'prompt_edit',
+          payload: { find: 'NOT_IN_PROMPT_XYZ', replace: 'x' },
+        }),
+      ],
+      agentVersionId,
+      agentConfig
+    );
+    expect(result.rejected[0].reason).toMatch(/not found verbatim/);
+  });
+
+  it('rejects no-op action_update empty changes', async () => {
+    const result = await validateAndInsert(
+      [
+        baseProposal({
+          recType: 'action_update',
+          payload: { actionId, changes: {} },
+        }),
+      ],
+      agentVersionId,
+      agentConfig
+    );
+    expect(result.rejected[0].reason).toMatch(/empty|no-op/i);
+  });
+
+  it('rejects duplicate fingerprints in batch', async () => {
+    const p = baseProposal({
+      recType: 'guardrail',
+      payload: { promptAddition: 'Unique rule ABC' },
+    });
+    const result = await validateAndInsert([p, { ...p }], agentVersionId, agentConfig);
+    expect(result.accepted).toHaveLength(1);
+    expect(result.rejected.some((r) => /Duplicate/i.test(r.reason))).toBe(true);
   });
 });
