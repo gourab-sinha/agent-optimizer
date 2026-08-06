@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import AgentAnalysis from './AgentAnalysis.vue'
 
 const locationId = ref('')
 const agents = ref<any[]>([])
@@ -11,6 +12,15 @@ const expandedAgent = ref<string | null>(null)
 const agentCalls = ref<Record<string, any[]>>({})
 const loadingCalls = ref<Record<string, boolean>>({})
 const syncingCalls = ref<Record<string, boolean>>({})
+const agentTabs = ref<Record<string, 'calls' | 'analysis' | 'metrics'>>({})
+
+function getAgentTab(agentId: string) {
+  return agentTabs.value[agentId] || 'calls'
+}
+
+function setAgentTab(agentId: string, tab: 'calls' | 'analysis' | 'metrics') {
+  agentTabs.value[agentId] = tab
+}
 
 // SSO Authentication
 async function requestSSOFromParent() {
@@ -290,17 +300,48 @@ function formatCallDate(dateStr: string) {
               </div>
             </div>
 
-            <!-- Expandable Call Logs -->
+            <!-- Expandable Section with Tabs -->
             <div v-if="expandedAgent === agent.id" class="border-t border-gray-100 bg-gradient-to-br from-slate-50 to-blue-50">
               <div class="p-6">
-                <div class="flex items-center justify-between mb-5">
-                  <h4 class="text-base font-bold text-gray-900 flex items-center gap-2">
-                    <svg class="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                    </svg>
-                    Call Logs
-                  </h4>
+                <!-- Tab Navigation -->
+                <div class="flex gap-2 mb-5">
+                  <button
+                    @click="setAgentTab(agent.id, 'calls')"
+                    :class="[
+                      'px-4 py-2 rounded-lg font-medium transition-all text-sm',
+                      getAgentTab(agent.id) === 'calls'
+                        ? 'bg-white text-blue-600 shadow-md'
+                        : 'text-gray-600 hover:bg-white/50'
+                    ]"
+                  >
+                    📞 Call Logs
+                  </button>
+                  <button
+                    @click="setAgentTab(agent.id, 'analysis')"
+                    :class="[
+                      'px-4 py-2 rounded-lg font-medium transition-all text-sm',
+                      getAgentTab(agent.id) === 'analysis'
+                        ? 'bg-white text-blue-600 shadow-md'
+                        : 'text-gray-600 hover:bg-white/50'
+                    ]"
+                  >
+                    🔍 Analysis
+                  </button>
+                  <button
+                    @click="setAgentTab(agent.id, 'metrics')"
+                    :class="[
+                      'px-4 py-2 rounded-lg font-medium transition-all text-sm',
+                      getAgentTab(agent.id) === 'metrics'
+                        ? 'bg-white text-blue-600 shadow-md'
+                        : 'text-gray-600 hover:bg-white/50'
+                    ]"
+                  >
+                    📊 Metrics
+                  </button>
                 </div>
+
+                <!-- Call Logs Tab -->
+                <div v-if="getAgentTab(agent.id) === 'calls'">
 
                 <!-- Loading State -->
                 <div v-if="loadingCalls[agent.id]" class="flex items-center justify-center py-16">
@@ -360,6 +401,22 @@ function formatCallDate(dateStr: string) {
                   </div>
                   <h4 class="text-base font-semibold text-gray-900 mb-1">No call logs found</h4>
                   <p class="text-sm text-gray-500">Click "Sync Calls" to fetch from HighLevel</p>
+                </div>
+                </div>
+
+                <!-- Analysis Tab -->
+                <div v-if="getAgentTab(agent.id) === 'analysis'" class="bg-white rounded-xl">
+                  <AgentAnalysis
+                    :agent-id="agent.id"
+                    :agent-name="agent.name"
+                    :location-id="locationId"
+                  />
+                </div>
+
+                <!-- Metrics Tab -->
+                <div v-if="getAgentTab(agent.id) === 'metrics'" class="bg-white rounded-xl p-12 text-center">
+                  <p class="text-lg font-medium text-gray-900 mb-2">📊 Metrics Coming Soon</p>
+                  <p class="text-sm text-gray-500">Pattern detection and performance metrics will appear here</p>
                 </div>
               </div>
             </div>
