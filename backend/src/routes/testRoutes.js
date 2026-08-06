@@ -1,5 +1,6 @@
 import express from 'express';
 import testGenerationService from '../services/testGenerationService.js';
+import testRunnerService from '../services/testRunnerService.js';
 
 const router = express.Router();
 
@@ -111,6 +112,113 @@ router.put('/:testCaseId/archive', async (req, res) => {
   } catch (error) {
     console.error('Archive test case error:', error);
     res.status(404).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @route   POST /api/tests/run
+ * @desc    Run test cases for an agent
+ * @body    { agentId, testCaseIds?, runsPerCase?, trigger? }
+ */
+router.post('/run', async (req, res) => {
+  try {
+    const { agentId, testCaseIds, runsPerCase, trigger } = req.body;
+
+    if (!agentId) {
+      return res.status(400).json({
+        success: false,
+        error: 'agentId is required'
+      });
+    }
+
+    const result = await testRunnerService.runTests(agentId, {
+      testCaseIds,
+      runsPerCase,
+      trigger
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error('Test run error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @route   GET /api/tests/runs/:testRunId
+ * @desc    Get test run details
+ */
+router.get('/runs/:testRunId', async (req, res) => {
+  try {
+    const { testRunId } = req.params;
+    const testRun = await testRunnerService.getTestRun(testRunId);
+
+    res.json({
+      success: true,
+      testRun
+    });
+  } catch (error) {
+    console.error('Get test run error:', error);
+    res.status(404).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @route   GET /api/tests/runs/:testRunId/results
+ * @desc    Get test results for a test run
+ */
+router.get('/runs/:testRunId/results', async (req, res) => {
+  try {
+    const { testRunId } = req.params;
+    const results = await testRunnerService.getTestResults(testRunId);
+
+    res.json({
+      success: true,
+      testRunId,
+      results,
+      count: results.length
+    });
+  } catch (error) {
+    console.error('Get test results error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @route   GET /api/tests/agent/:agentId/runs
+ * @desc    Get test runs for an agent
+ * @query   limit=10
+ */
+router.get('/agent/:agentId/runs', async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const { limit } = req.query;
+
+    const runs = await testRunnerService.getTestRunsForAgent(agentId, {
+      limit: limit ? parseInt(limit) : 10
+    });
+
+    res.json({
+      success: true,
+      agentId,
+      runs,
+      count: runs.length
+    });
+  } catch (error) {
+    console.error('Get test runs error:', error);
+    res.status(500).json({
       success: false,
       error: error.message
     });
