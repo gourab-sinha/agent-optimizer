@@ -5,6 +5,7 @@ import agentSyncRoutes from './agentSyncRoutes.js';
 import callRoutes from './callRoutes.js';
 import oauthRoutes from './oauthRoutes.js';
 import analysisRoutes from './analysisRoutes.js';
+import patternRoutes from './patternRoutes.js';
 
 const router = express.Router();
 
@@ -19,6 +20,7 @@ const router = express.Router();
  * - *      /api/agents/*
  * - *      /api/calls/*
  * - *      /api/analysis/*
+ * - *      /api/patterns/*
  */
 
 // OAuth routes
@@ -32,6 +34,9 @@ router.use('/calls', callRoutes);
 
 // Analysis routes
 router.use('/analysis', analysisRoutes);
+
+// Pattern detection routes
+router.use('/patterns', patternRoutes);
 
 // 404 handler for API routes
 router.use((req, res) => {
