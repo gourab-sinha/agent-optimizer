@@ -172,18 +172,20 @@
           >
             <div class="test-case-header" @click="toggleTestCase(testCase.id)">
               <div class="test-case-title">
-                <input
-                  type="checkbox"
-                  :checked="selectedTests.includes(testCase.id)"
-                  @change="toggleTestSelection(testCase.id)"
-                  @click.stop
-                  :disabled="testCaseResults[testCase.id] !== undefined"
-                  class="test-checkbox"
-                />
-                <span class="test-kind-badge" :class="testCase.kind">
-                  {{ testCase.kind === 'happy_path' ? '✓ Happy Path' : '⚠️ Edge Case' }}
-                </span>
-                <h5>{{ testCase.title }}</h5>
+                <div class="test-case-info">
+                  <input
+                    type="checkbox"
+                    :checked="selectedTests.includes(testCase.id)"
+                    @change="toggleTestSelection(testCase.id)"
+                    @click.stop
+                    :disabled="testCaseResults[testCase.id] !== undefined"
+                    class="test-checkbox"
+                  />
+                  <span class="test-kind-badge" :class="testCase.kind">
+                    {{ testCase.kind === 'happy_path' ? '✓ Happy Path' : '⚠️ Edge Case' }}
+                  </span>
+                  <h5>{{ testCase.title }}</h5>
+                </div>
                 <span v-if="testCaseResults[testCase.id]" class="test-status-badge" :class="{ passed: testCaseResults[testCase.id].passed }">
                   {{ testCaseResults[testCase.id].passed ? '✓ Passed' : '✗ Failed' }}
                 </span>
@@ -1102,8 +1104,19 @@ export default {
 .test-case-title {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-right: 12px;
+}
+
+.test-case-info {
+  display: flex;
+  align-items: center;
   gap: 12px;
   flex: 1;
+  min-width: 0;
 }
 
 .test-case-title h5 {
@@ -1111,6 +1124,11 @@ export default {
   font-size: 15px;
   font-weight: 500;
   color: #1a1a1a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
 
 .test-checkbox {
@@ -1149,7 +1167,7 @@ export default {
   border-radius: 12px;
   font-weight: 500;
   white-space: nowrap;
-  margin-left: 8px;
+  flex-shrink: 0;
 }
 
 .test-status-badge.passed {
@@ -1171,6 +1189,7 @@ export default {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .run-test-btn {
