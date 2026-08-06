@@ -34,6 +34,7 @@ export async function syncAgent(locationId, agentId) {
            language = $7,
            inbound_number = $8,
            timezone = $9,
+           is_deleted = false,
            updated_at = NOW()
        RETURNING *`,
       [
@@ -72,6 +73,9 @@ export async function syncAllAgents(locationId) {
 
     console.log(`Fetched ${agents.length} agents from HighLevel`);
 
+    // Get the IDs of agents from HighLevel
+    const highlevelAgentIds = agents.map(a => a.id);
+
     const syncedAgents = [];
 
     // Sync each agent (this will fetch full details for each)
@@ -82,6 +86,37 @@ export async function syncAllAgents(locationId) {
       } catch (error) {
         console.error(`Failed to sync agent ${agentSummary.id}:`, error.message);
         // Continue syncing other agents
+      }
+    }
+
+    // Mark agents as deleted if they're not in HighLevel anymore
+    if (highlevelAgentIds.length > 0) {
+      const deleteResult = await db.query(
+        `UPDATE agents
+         SET is_deleted = true, updated_at = NOW()
+         WHERE location_id = $1
+           AND id != ALL($2)
+           AND is_deleted = false
+         RETURNING id, name`,
+        [locationId, highlevelAgentIds]
+      );
+
+      if (deleteResult.rows.length > 0) {
+        console.log(`Marked ${deleteResult.rows.length} agents as deleted:`,
+          deleteResult.rows.map(a => `${a.name} (${a.id})`).join(', '));
+      }
+    } else {
+      // If no agents in HighLevel, mark all agents for this location as deleted
+      const deleteResult = await db.query(
+        `UPDATE agents
+         SET is_deleted = true, updated_at = NOW()
+         WHERE location_id = $1 AND is_deleted = false
+         RETURNING id, name`,
+        [locationId]
+      );
+
+      if (deleteResult.rows.length > 0) {
+        console.log(`Marked all ${deleteResult.rows.length} agents as deleted (no agents in HighLevel)`);
       }
     }
 
