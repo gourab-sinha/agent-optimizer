@@ -15,18 +15,19 @@ This monorepo contains:
 
 1. [What this product does](#what-this-product-does)
 2. [Architecture](#architecture)
-3. [Prerequisites](#prerequisites)
-4. [Create a HighLevel Marketplace application](#create-a-highlevel-marketplace-application)
-5. [Local development setup](#local-development-setup)
-6. [Environment variables](#environment-variables)
-7. [Database setup](#database-setup)
-8. [Running the app](#running-the-app)
-9. [Install & use the app in HighLevel](#install--use-the-app-in-highlevel)
-10. [API overview](#api-overview)
-11. [Project structure](#project-structure)
-12. [Testing](#testing)
-13. [Production notes](#production-notes)
-14. [Troubleshooting](#troubleshooting)
+3. [Recommendation engine](#recommendation-engine)
+4. [Prerequisites](#prerequisites)
+5. [Create a HighLevel Marketplace application](#create-a-highlevel-marketplace-application)
+6. [Local development setup](#local-development-setup)
+7. [Environment variables](#environment-variables)
+8. [Database setup](#database-setup)
+9. [Running the app](#running-the-app)
+10. [Install & use the app in HighLevel](#install--use-the-app-in-highlevel)
+11. [API overview](#api-overview)
+12. [Project structure](#project-structure)
+13. [Testing](#testing)
+14. [Production notes](#production-notes)
+15. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -41,8 +42,8 @@ Install app (OAuth)
   → Evaluate calls against rubric → findings
   → Detect recurring issue patterns
   → Generate test cases + run simulations
-  → Propose recommendations (prompt / actions / settings)
-  → Validate & store recommendations for review
+  → Generate recommendations (diagnose → expand → validate → rank)
+  → Review ranked proposals in the UI
 ```
 
 ---
@@ -154,9 +155,11 @@ sequenceDiagram
   A->>D: test_cases, test_runs, test_results
 
   C->>A: POST /api/recommendations/generate/:agentId
-  A->>L: Propose fixes
-  A->>A: validateAndInsert (deterministic)
-  A->>D: recommendations
+  A->>A: assembleInput (patterns, tests, priors, readiness)
+  A->>L: Phase 1 diagnose strategies
+  A->>L: Phase 2 expand payloads
+  A->>A: normalize → validate → dedupe → rank
+  A->>D: recommendations (status=proposed)
 ```
 
 ### Request path (local dev)
@@ -171,6 +174,174 @@ Browser → http://localhost:5173
                                          ├─ HighLevel API
                                          └─ Anthropic / OpenAI
 ```
+
+---
+
+## Recommendation engine
+
+The recommendation engine lives in `backend/src/recommend/` and turns **issue patterns + test failures + agent config** into **typed, validated, ranked** configuration fixes.
+
+### Pipeline (high quality architecture)
+
+```mermaid
+flowchart TD
+  API["POST /api/recommendations/generate/:agentId"] --> Assemble
+
+  subgraph Assemble["1. assembleInput"]
+    A1["Agent config + full actions"]
+    A2["Top patterns + finding rationales + evidence"]
+    A3["Latest test run summary"]
+    A4["Prior open recommendations"]
+    A5["Readiness gate"]
+  end
+
+  Assemble -->|blocked if no rubric/patterns| Block["400 + readiness.reasons"]
+  Assemble -->|ready| Phase1
+
+  subgraph Phase1["2a. diagnoseStrategies LLM"]
+    D1["One recType per pattern"]
+    D2["rootCause, confidence, risk"]
+    D3["Prefer surgical levers"]
+  end
+
+  Phase1 --> Phase2
+
+  subgraph Phase2["2b. expandProposals LLM"]
+    E1["Full payloads from catalog"]
+    E2["JSON retry on parse failure"]
+  end
+
+  Phase2 --> Norm["3. normalize aliases"]
+  Norm --> Val
+
+  subgraph Val["4. validateAndInsert"]
+    V1["Shape + ID existence"]
+    V2["No-ops / compliance / prompt_edit find"]
+    V3["Dedupe vs DB + batch"]
+    V4["One prompt_patch max"]
+    V5["Insert status=proposed"]
+  end
+
+  Val --> Rank["5. rank by impact × confidence × risk × surgical preference"]
+  Rank --> Out["JSON: recommendations, meta, readiness"]
+```
+
+### Stages in code
+
+| Stage | Module | Role |
+|--------|--------|------|
+| Assemble | `assembleInput.js` | Rich context + **readiness** (`canGenerate`) |
+| Diagnose | `propose.js` → `diagnoseStrategies` | Phase-1 LLM: strategy only |
+| Expand | `propose.js` → `expandProposals` | Phase-2 LLM: full payloads |
+| Fallback | `propose.js` single-shot | Used if phase-1/2 fails or returns empty |
+| Normalize | `normalize.js` | `actionName`→`name`, snake_case, defaults |
+| Validate | `validate.js` | Deterministic accept/reject + insert |
+| Rank | `rank.js` | `priorityScore` for UI ordering |
+| Orchestrate | `index.js` → `generateRecommendations` | End-to-end workflow |
+| Types | `recTypes.js` | Whitelist, tiers, apply, guidance catalog |
+
+### Recommendation types (surgical preferred)
+
+Preference order (best → last resort):
+
+1. `action_update` / `action_add` — tool failures  
+2. `prompt_edit` — exact substring replace (safe)  
+3. `guardrail` / `escalation_rule` — append rules / transfer  
+4. `kb_attach` / `welcome_message` / `idle_reminder` / `patience_level` / `max_call_duration`  
+5. `advisory_temperature` / `advisory_model` — sim-only tier  
+6. `prompt_patch` — full rewrite (high risk; max one per batch; rewrite-size checks)
+
+Tier is **never** set by the LLM; it always comes from `REC_TYPES`.
+
+### Readiness gate
+
+Generation is **blocked** (HTTP 400) unless:
+
+- There is at least one **enabled rubric criterion**, and  
+- There is at least one **issue pattern** for the agent version.
+
+Warnings (non-blocking): no completed tests, all tests already passing, thin evidence.
+
+Bypass for tooling/debug:
+
+```http
+POST /api/recommendations/generate/:agentId
+Content-Type: application/json
+
+{ "force": true, "singleShot": false }
+```
+
+| Body field | Effect |
+|------------|--------|
+| `force: true` | Generate even if readiness fails |
+| `singleShot: true` | Skip diagnose/expand; one LLM call only |
+
+### Validation rules that protect quality
+
+- Payload must match `payloadShape` for the `recType`  
+- `linkedPatternIds` / `expectedCriterionIds` must exist (criterion auto-filled from pattern when omitted)  
+- `action_update` requires non-empty `changes` and a real `actionId`  
+- `prompt_edit.find` must appear **verbatim** in the current prompt  
+- `prompt_patch` preserves compliance/opt-out language; rejects near-total rewrites  
+- No-ops rejected (identical welcome message, empty FAQ, etc.)  
+- Deduped against open DB recommendations and within the batch  
+- At most **one** `prompt_patch` per generation  
+
+### Ranking
+
+Accepted recs are sorted by:
+
+```text
+priorityScore ≈ max(linked pattern impact) × confidence × riskWeight + surgicalBonus
+```
+
+Metadata is stored under `payload._meta` (`confidence`, `risk`, `rootCause`, `priorityScore`) so the UI can show priority without a schema migration.
+
+### Example generate response
+
+```json
+{
+  "success": true,
+  "accepted": 3,
+  "rejected": 1,
+  "recommendations": [
+    {
+      "recType": "action_update",
+      "tier": "applicable",
+      "priorityScore": 0.82,
+      "confidence": 0.9,
+      "risk": "medium",
+      "payload": { "actionId": "...", "changes": { "instructions": "..." } },
+      "linkedPatternIds": ["..."],
+      "expectedCriterionIds": ["..."]
+    }
+  ],
+  "agentVersionId": "...",
+  "readiness": {
+    "canGenerate": true,
+    "mode": "patterns+tests",
+    "warnings": []
+  },
+  "meta": {
+    "patternCount": 4,
+    "proposalCount": 4,
+    "topPriority": 0.82
+  }
+}
+```
+
+### Quality prerequisites (data pipeline)
+
+For best recommendations, run in order for an agent:
+
+1. Sync agent + calls  
+2. Generate rubric  
+3. Evaluate calls → findings  
+4. Detect patterns  
+5. (Recommended) Generate + run tests  
+6. **Generate recommendations**
+
+Without steps 2–4, the readiness gate blocks generation.
 
 ---
 
@@ -657,8 +828,8 @@ http://localhost:5173/?locationId=YOUR_GHL_LOCATION_ID
 2. **Sync calls** for an agent.  
 3. Open agent analysis → **Generate rubric** → **Evaluate calls**.  
 4. **Detect patterns**.  
-5. **Generate & run tests**.  
-6. **Generate recommendations** and review them in the UI.
+5. **Generate & run tests** (recommended for higher-quality recs).  
+6. **Generate recommendations** and review ranked results in the UI.
 
 ---
 
@@ -675,7 +846,7 @@ Base path: **`/api`**
 | **Analysis** | `POST /analysis/rubric/generate`, `GET /analysis/rubric/:agentVersionId`, `POST /analysis/evaluate`, `GET /analysis/findings/:callId` |
 | **Patterns** | `POST /patterns/detect`, get by agent/version/id |
 | **Tests** | `POST /tests/generate`, `POST /tests/run`, list/archive cases & runs |
-| **Recommendations** | `GET /recommendations/agent/:agentId`, `POST /recommendations/generate/:agentId`, `DELETE /recommendations/:id` |
+| **Recommendations** | `GET /recommendations/agent/:agentId`, `POST /recommendations/generate/:agentId` (body: optional `force`, `singleShot`), `DELETE /recommendations/:id` |
 
 Health (outside `/api`):
 
@@ -700,7 +871,14 @@ agent-optimizer/
 │   │   ├── controllers/      ← HTTP handlers (analysis)
 │   │   ├── routes/           ← API routers
 │   │   ├── services/         ← business logic
-│   │   ├── recommend/        ← recommendation engine
+│   │   ├── recommend/        ← recommendation engine (assemble → diagnose → expand → validate → rank)
+│   │   │   ├── index.js          # generateRecommendations orchestration
+│   │   │   ├── assembleInput.js  # rich context + readiness
+│   │   │   ├── propose.js        # two-phase LLM (diagnose + expand)
+│   │   │   ├── normalize.js      # field aliases
+│   │   │   ├── validate.js       # deterministic gate + insert
+│   │   │   ├── rank.js           # priority scoring
+│   │   │   └── recTypes.js       # type registry + apply + catalog
 │   │   ├── ghl/              ← HighLevel OAuth + SDK wrappers
 │   │   ├── db/               ← connection, schema, migrations, queries
 │   │   ├── utils/            ← encryption, SSO decrypt
@@ -791,6 +969,7 @@ See [LICENSE](./LICENSE).
 |-----------------|----------|
 | Database tables / CRUD | `backend/docs/Database.md`, `backend/src/db/schema.sql` |
 | OAuth implementation | `backend/src/ghl/oauth.js`, `backend/src/routes/oauthRoutes.js` |
+| Recommendation engine | `backend/src/recommend/` (see [Recommendation engine](#recommendation-engine)) |
 | Recommendation types | `backend/src/recommend/recTypes.js` |
 | HighLevel marketplace docs | [Create Marketplace App](https://marketplace.gohighlevel.com/docs/oauth/CreateMarketplaceApp/), [Developer Marketplace intro](https://help.gohighlevel.com/support/solutions/articles/155000000136-how-to-get-started-with-the-developer-s-marketplace) |
 
