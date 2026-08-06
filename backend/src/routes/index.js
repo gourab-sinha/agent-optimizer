@@ -7,6 +7,7 @@ import oauthRoutes from './oauthRoutes.js';
 import analysisRoutes from './analysisRoutes.js';
 import patternRoutes from './patternRoutes.js';
 import testRoutes from './testRoutes.js';
+import recommendationRoutes from './recommendations.js';
 
 const router = express.Router();
 
@@ -42,6 +43,9 @@ router.use('/patterns', patternRoutes);
 
 // Test case routes
 router.use('/tests', testRoutes);
+
+// Recommendation routes
+router.use('/recommendations', recommendationRoutes);
 
 // 404 handler for API routes
 router.use((req, res) => {

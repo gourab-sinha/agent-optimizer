@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import AgentAnalysis from './AgentAnalysis.vue'
 import AgentMetrics from './AgentMetrics.vue'
 import AgentTests from './AgentTests.vue'
+import AgentRecommendations from './AgentRecommendations.vue'
 
 const locationId = ref('')
 const agents = ref<any[]>([])
@@ -14,13 +15,13 @@ const expandedAgent = ref<string | null>(null)
 const agentCalls = ref<Record<string, any[]>>({})
 const loadingCalls = ref<Record<string, boolean>>({})
 const syncingCalls = ref<Record<string, boolean>>({})
-const agentTabs = ref<Record<string, 'calls' | 'analysis' | 'metrics' | 'tests'>>({})
+const agentTabs = ref<Record<string, 'calls' | 'analysis' | 'metrics' | 'tests' | 'recommendations'>>({})
 
 function getAgentTab(agentId: string) {
   return agentTabs.value[agentId] || 'calls'
 }
 
-function setAgentTab(agentId: string, tab: 'calls' | 'analysis' | 'metrics' | 'tests') {
+function setAgentTab(agentId: string, tab: 'calls' | 'analysis' | 'metrics' | 'tests' | 'recommendations') {
   agentTabs.value[agentId] = tab
 }
 
@@ -351,6 +352,17 @@ function formatCallDate(dateStr: string) {
                   >
                     🧪 Tests
                   </button>
+                  <button
+                    @click="setAgentTab(agent.id, 'recommendations')"
+                    :class="[
+                      'px-4 py-2 rounded-lg font-medium transition-all text-sm',
+                      getAgentTab(agent.id) === 'recommendations'
+                        ? 'bg-white text-blue-600 shadow-md'
+                        : 'text-gray-600 hover:bg-white/50'
+                    ]"
+                  >
+                    💡 Recommendations
+                  </button>
                 </div>
 
                 <!-- Call Logs Tab -->
@@ -438,6 +450,13 @@ function formatCallDate(dateStr: string) {
                 <!-- Tests Tab -->
                 <div v-if="getAgentTab(agent.id) === 'tests'" class="bg-white rounded-xl">
                   <AgentTests
+                    :agent-id="agent.id"
+                  />
+                </div>
+
+                <!-- Recommendations Tab -->
+                <div v-if="getAgentTab(agent.id) === 'recommendations'" class="bg-white rounded-xl">
+                  <AgentRecommendations
                     :agent-id="agent.id"
                   />
                 </div>

@@ -170,43 +170,6 @@ async function loadPatterns() {
   }
 }
 
-// Evaluate calls
-async function evaluateCalls() {
-  if (!rubric.value) {
-    error.value = 'Please generate rubric first'
-    return
-  }
-
-  evaluating.value = true
-  error.value = ''
-  try {
-    const callIds = calls.value.map(c => c.id)
-
-    const response = await fetch('/api/analysis/evaluate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        rubricId: rubric.value.id,
-        callIds: callIds
-      })
-    })
-
-    if (!response.ok) throw new Error('Failed to evaluate calls')
-
-    const data = await response.json()
-    if (data.success) {
-      // Reload findings for selected call
-      if (selectedCall.value) {
-        await loadFindings(selectedCall.value)
-      }
-    }
-  } catch (err: any) {
-    error.value = err.message
-  } finally {
-    evaluating.value = false
-  }
-}
-
 // Analyse all calls (generate rubric if needed, then evaluate, then detect patterns)
 async function analyseAll() {
   if (!calls.value.length) {
