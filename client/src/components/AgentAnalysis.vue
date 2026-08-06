@@ -175,6 +175,67 @@ async function evaluateCalls() {
   }
 }
 
+// Analyse all calls (generate rubric if needed, then evaluate)
+async function analyseAll() {
+  if (!calls.value.length) {
+    error.value = 'No calls to analyze'
+    return
+  }
+
+  evaluating.value = true
+  error.value = ''
+
+  try {
+    // Step 1: Generate rubric if it doesn't exist
+    if (!rubric.value) {
+      const versionId = await getAgentVersion()
+      if (!versionId) throw new Error('No agent version found')
+
+      const rubricResponse = await fetch('/api/analysis/rubric/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentVersionId: versionId })
+      })
+
+      if (!rubricResponse.ok) throw new Error('Failed to generate rubric')
+
+      const rubricData = await rubricResponse.json()
+      if (!rubricData.success) throw new Error('Failed to generate rubric')
+
+      // Reload rubric to get the full object with ID
+      await loadRubric()
+
+      if (!rubric.value) throw new Error('Rubric generation failed')
+    }
+
+    // Step 2: Evaluate all calls
+    const callIds = calls.value.map(c => c.id)
+
+    const evalResponse = await fetch('/api/analysis/evaluate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rubricId: rubric.value.id,
+        callIds: callIds
+      })
+    })
+
+    if (!evalResponse.ok) throw new Error('Failed to evaluate calls')
+
+    const evalData = await evalResponse.json()
+    if (evalData.success) {
+      // Reload findings for selected call
+      if (selectedCall.value) {
+        await loadFindings(selectedCall.value)
+      }
+    }
+  } catch (err: any) {
+    error.value = err.message
+  } finally {
+    evaluating.value = false
+  }
+}
+
 // Select call and load findings
 function selectCall(callId: string) {
   selectedCall.value = callId
@@ -269,12 +330,11 @@ loadRubric()
               {{ loadingCalls ? '⏳ Loading...' : '🔄 Refresh' }}
             </button>
             <button
-              v-if="rubric"
-              @click="evaluateCalls"
+              @click="analyseAll"
               :disabled="evaluating || !calls.length"
               class="btn-primary"
             >
-              {{ evaluating ? '⏳ Evaluating...' : '🎯 Evaluate All' }}
+              {{ evaluating ? '⏳ Analysing...' : '🎯 Analyse' }}
             </button>
           </div>
         </div>
@@ -321,11 +381,8 @@ loadRubric()
 
             <div v-else-if="!findings.length" class="empty-detail">
               <p>No findings yet</p>
-              <button v-if="rubric" @click="evaluateCalls" class="btn-primary">
-                Evaluate This Call
-              </button>
-              <button v-else @click="generateRubric" class="btn-primary">
-                Generate Rubric First
+              <button @click="analyseAll" :disabled="evaluating" class="btn-primary">
+                {{ evaluating ? '⏳ Analysing...' : '🎯 Analyse' }}
               </button>
             </div>
 
