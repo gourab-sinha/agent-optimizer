@@ -61,7 +61,7 @@
             <h4>Addresses Patterns:</h4>
             <ul class="pattern-list">
               <li v-for="pattern in rec.linkedPatterns" :key="pattern.id">
-                <span class="pattern-title">{{ pattern.title }}</span>
+                <span class="pattern-title">{{ formatPatternTitle(pattern.title) }}</span>
                 <span class="pattern-criterion">({{ pattern.criterion_key }})</span>
               </li>
             </ul>
@@ -214,6 +214,17 @@ function formatRecType(recType) {
 
 function formatDate(dateString) {
   return new Date(dateString).toLocaleString()
+}
+
+function formatPatternTitle(title) {
+  // Convert snake_case or camelCase to readable title
+  return title
+    .replace(/_/g, ' ')
+    .replace(/([A-Z])/g, ' $1')
+    .trim()
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
 }
 
 function renderDiff(diffString) {
@@ -436,23 +447,38 @@ onMounted(() => {
   list-style: none;
   padding: 0;
   margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .pattern-list li,
 .criteria-list li {
-  padding: 6px 0;
+  padding: 8px 12px;
   font-size: 14px;
   color: #374151;
+  background: #f9fafb;
+  border-left: 3px solid #3b82f6;
+  border-radius: 4px;
 }
 
 .pattern-title {
   font-weight: 500;
+  color: #1e40af;
+  display: block;
+  margin-bottom: 4px;
 }
 
 .pattern-criterion {
   color: #6b7280;
-  font-size: 12px;
-  margin-left: 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  background: #e5e7eb;
+  padding: 2px 6px;
+  border-radius: 3px;
+  display: inline-block;
 }
 
 .payload-preview {
