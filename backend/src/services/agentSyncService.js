@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import db from '../db/connection.js';
 import { listAgents, getAgent } from '../ghl/agents.js';
 
@@ -7,10 +8,30 @@ import { listAgents, getAgent } from '../ghl/agents.js';
  */
 
 /**
+ * Calculate hash of agent configuration for change detection
+ * @param {Object} agentConfig - Agent configuration object
+ * @returns {string} SHA256 hash of the config
+ */
+function calculateConfigHash(agentConfig) {
+  // Extract only the fields that matter for evaluation
+  const relevantConfig = {
+    agentPrompt: agentConfig.agentPrompt || agentConfig.prompt,
+    model: agentConfig.model,
+    temperature: agentConfig.temperature,
+    actions: agentConfig.actions || [],
+    voiceId: agentConfig.voiceId,
+    language: agentConfig.language,
+  };
+
+  const normalized = JSON.stringify(relevantConfig, Object.keys(relevantConfig).sort());
+  return crypto.createHash('sha256').update(normalized).digest('hex');
+}
+
+/**
  * Sync a single agent's full configuration
  * @param {string} locationId - Location ID
  * @param {string} agentId - Agent ID
- * @returns {Promise<Object>} Synced agent data
+ * @returns {Promise<Object>} Synced agent data with versionCreated flag
  */
 export async function syncAgent(locationId, agentId) {
   try {
@@ -50,8 +71,84 @@ export async function syncAgent(locationId, agentId) {
       ]
     );
 
+    const syncedAgent = result.rows[0];
     console.log(`✓ Synced agent ${agentId}`);
-    return result.rows[0];
+
+    // Check if we need to create a new agent version
+    const configHash = calculateConfigHash(agent);
+
+    // Get the latest version for this agent
+    const latestVersionResult = await db.query(
+      `SELECT id, config, created_at
+       FROM agent_versions
+       WHERE agent_id = $1 AND is_deleted = false
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [agentId]
+    );
+
+    let versionCreated = false;
+    let versionId = null;
+
+    if (latestVersionResult.rows.length === 0) {
+      // No version exists - create the first baseline version
+      console.log(`  → Creating baseline version (first sync)`);
+
+      const versionResult = await db.query(
+        `INSERT INTO agent_versions (agent_id, label, source, config, actions)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id`,
+        [
+          agentId,
+          'baseline',
+          'snapshot',
+          JSON.stringify(agent),
+          JSON.stringify(agent.actions || [])
+        ]
+      );
+
+      versionId = versionResult.rows[0].id;
+      versionCreated = true;
+      console.log(`  ✓ Created baseline version ${versionId}`);
+
+    } else {
+      // Version exists - check if config changed
+      const latestVersion = latestVersionResult.rows[0];
+      const latestConfigHash = calculateConfigHash(latestVersion.config);
+
+      if (configHash !== latestConfigHash) {
+        // Config changed - create new snapshot version
+        console.log(`  → Config changed, creating new snapshot version`);
+
+        const versionResult = await db.query(
+          `INSERT INTO agent_versions (agent_id, label, source, config, actions)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING id`,
+          [
+            agentId,
+            'baseline',
+            'snapshot',
+            JSON.stringify(agent),
+            JSON.stringify(agent.actions || [])
+          ]
+        );
+
+        versionId = versionResult.rows[0].id;
+        versionCreated = true;
+        console.log(`  ✓ Created new version ${versionId} (config changed)`);
+
+      } else {
+        // Config unchanged - no new version needed
+        versionId = latestVersion.id;
+        console.log(`  → Config unchanged, using existing version ${versionId}`);
+      }
+    }
+
+    return {
+      ...syncedAgent,
+      versionCreated,
+      versionId,
+    };
 
   } catch (error) {
     console.error(`Failed to sync agent ${agentId}:`, error.message);
