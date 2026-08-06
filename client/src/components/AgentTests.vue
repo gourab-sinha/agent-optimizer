@@ -961,16 +961,19 @@ export default {
 .run-stat {
   display: flex;
   gap: 6px;
-  font-size: 14px;
+  font-size: 13px;
+  align-items: center;
 }
 
 .run-stat .stat-label {
   color: #6b7280;
+  font-size: 13px;
 }
 
 .run-stat .stat-value {
   font-weight: 600;
   color: #1a1a1a;
+  font-size: 14px;
 }
 
 .run-stat .stat-value.success {
