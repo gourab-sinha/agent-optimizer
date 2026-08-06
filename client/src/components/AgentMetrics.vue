@@ -94,6 +94,18 @@ async function detectPatterns() {
   }
 }
 
+// Format pattern title for better readability
+function formatPatternTitle(title: string) {
+  // Convert snake_case or camelCase to readable title
+  return title
+    .replace(/_/g, ' ')
+    .replace(/([A-Z])/g, ' $1')
+    .trim()
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
+}
+
 // Get severity badge class
 function getSeverityClass(severity: number) {
   if (severity === 3) return 'bg-red-100 text-red-800 border-red-200'
@@ -195,7 +207,7 @@ onMounted(() => {
             <!-- Pattern Header -->
             <div class="flex items-center gap-3 mb-3">
               <span class="text-2xl font-bold text-gray-400">#{{ index + 1 }}</span>
-              <h4 class="text-base font-bold text-gray-900">{{ pattern.title }}</h4>
+              <h4 class="text-base font-bold text-gray-900">{{ formatPatternTitle(pattern.title) }}</h4>
             </div>
 
             <!-- Description -->
