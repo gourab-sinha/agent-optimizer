@@ -97,6 +97,16 @@ if (process.env.FRONTEND_BUILD_PATH) {
   });
 }
 
+// Test-only hook to exercise error middleware
+if (process.env.NODE_ENV === 'test') {
+  app.get('/__test_error__', (req, res, next) => {
+    const err = new Error('forced test error');
+    err.statusCode = 418;
+    err.name = 'TestError';
+    next(err);
+  });
+}
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
@@ -176,7 +186,11 @@ async function shutdown(signal) {
     await stopQueue();
 
     // Close database connections
-    await db.closePool();
+    if (typeof db.closePool === 'function') {
+      await db.closePool();
+    } else if (typeof db.close === 'function') {
+      await db.close();
+    }
 
     console.log('✓ Shutdown complete');
     process.exit(0);
@@ -201,4 +215,5 @@ if (process.env.NODE_ENV !== 'test') {
   start();
 }
 
+export { start, shutdown };
 export default app;

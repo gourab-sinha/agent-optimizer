@@ -247,4 +247,4 @@ class GHLClient {
 const ghlClient = new GHLClient();
 
 export default ghlClient;
-export { ghlClient };
+export { ghlClient, PostgreSQLSessionStorage, GHLClient };
