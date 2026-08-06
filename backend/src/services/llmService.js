@@ -35,6 +35,7 @@ const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-202410
  * @param {string} options.model - Override default model
  * @param {number} options.temperature - Temperature (0-1)
  * @param {number} options.maxTokens - Max tokens to generate
+ * @param {string|Object} options.responseFormat - Response format ('json' or JSON schema object)
  * @returns {Promise<{content: string, usage: Object, metadata: Object}>}
  */
 export async function callLLM({
@@ -45,6 +46,7 @@ export async function callLLM({
   model = null,
   temperature = 0.7,
   maxTokens = 4096,
+  responseFormat = null,
 }) {
   const startTime = Date.now();
 
@@ -58,6 +60,7 @@ export async function callLLM({
         model: model || OPENAI_MODEL,
         temperature,
         maxTokens,
+        responseFormat,
       });
     } else if (LLM_PROVIDER === 'anthropic') {
       result = await callAnthropic({
@@ -66,6 +69,7 @@ export async function callLLM({
         model: model || ANTHROPIC_MODEL,
         temperature,
         maxTokens,
+        responseFormat,
       });
     } else {
       throw new Error(`Invalid LLM_PROVIDER: ${LLM_PROVIDER}. Must be 'openai' or 'anthropic'`);
@@ -103,7 +107,7 @@ export async function callLLM({
 /**
  * Call OpenAI API using official SDK
  */
-async function callOpenAI({ prompt, systemPrompt, model, temperature, maxTokens }) {
+async function callOpenAI({ prompt, systemPrompt, model, temperature, maxTokens, responseFormat }) {
   if (!openaiClient) {
     throw new Error('OpenAI client not initialized. Set LLM_PROVIDER=openai and OPENAI_API_KEY');
   }
@@ -116,12 +120,27 @@ async function callOpenAI({ prompt, systemPrompt, model, temperature, maxTokens 
 
   messages.push({ role: 'user', content: prompt });
 
-  const response = await openaiClient.chat.completions.create({
+  const requestParams = {
     model,
     messages,
     temperature,
     max_tokens: maxTokens,
-  });
+  };
+
+  // Add response format if requested
+  if (responseFormat) {
+    if (responseFormat === 'json' || responseFormat === 'json_object') {
+      requestParams.response_format = { type: 'json_object' };
+    } else if (typeof responseFormat === 'object') {
+      // If a schema is provided, use structured outputs (requires gpt-4o or later)
+      requestParams.response_format = {
+        type: 'json_schema',
+        json_schema: responseFormat
+      };
+    }
+  }
+
+  const response = await openaiClient.chat.completions.create(requestParams);
 
   return {
     content: response.choices[0].message.content,
@@ -137,7 +156,7 @@ async function callOpenAI({ prompt, systemPrompt, model, temperature, maxTokens 
 /**
  * Call Anthropic API using official SDK
  */
-async function callAnthropic({ prompt, systemPrompt, model, temperature, maxTokens }) {
+async function callAnthropic({ prompt, systemPrompt, model, temperature, maxTokens, responseFormat }) {
   if (!anthropicClient) {
     throw new Error('Anthropic client not initialized. Set LLM_PROVIDER=anthropic and ANTHROPIC_API_KEY');
   }
@@ -153,6 +172,17 @@ async function callAnthropic({ prompt, systemPrompt, model, temperature, maxToke
 
   if (systemPrompt) {
     params.system = systemPrompt;
+  }
+
+  // For Anthropic, enforce JSON via system prompt enhancement
+  if (responseFormat) {
+    const jsonInstruction = '\n\nIMPORTANT: You must respond with valid JSON only. Do not include any text before or after the JSON object.';
+
+    if (params.system) {
+      params.system = params.system + jsonInstruction;
+    } else {
+      params.system = 'You are a helpful assistant that responds in JSON format.' + jsonInstruction;
+    }
   }
 
   const response = await anthropicClient.messages.create(params);

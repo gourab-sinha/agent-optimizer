@@ -11,6 +11,7 @@
     "test:llm": "node scripts/test-llm.js",
     "test:analysis:real": "node scripts/test-analysis-real.js",
     "test:patterns": "node scripts/test-patterns.js",
+    "test:generate": "node scripts/test-case-generation.js",
     "db:migrate": "node src/db/migrate.js",
     "db:examples": "node src/db/examples.js",
     "migrate": "node src/db/run-migrations.js",

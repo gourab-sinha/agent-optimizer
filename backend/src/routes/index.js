@@ -6,6 +6,7 @@ import callRoutes from './callRoutes.js';
 import oauthRoutes from './oauthRoutes.js';
 import analysisRoutes from './analysisRoutes.js';
 import patternRoutes from './patternRoutes.js';
+import testRoutes from './testRoutes.js';
 
 const router = express.Router();
 
@@ -21,6 +22,7 @@ const router = express.Router();
  * - *      /api/calls/*
  * - *      /api/analysis/*
  * - *      /api/patterns/*
+ * - *      /api/tests/*
  */
 
 // OAuth routes
@@ -37,6 +39,9 @@ router.use('/analysis', analysisRoutes);
 
 // Pattern detection routes
 router.use('/patterns', patternRoutes);
+
+// Test case routes
+router.use('/tests', testRoutes);
 
 // 404 handler for API routes
 router.use((req, res) => {
