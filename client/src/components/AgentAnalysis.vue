@@ -464,7 +464,7 @@ loadPatterns()
               <div v-if="findingsByStatus.pass.length" class="findings-group">
                 <h4 class="group-header pass">✅ Passes ({{ findingsByStatus.pass.length }})</h4>
                 <div
-                  v-for="finding in findingsByStatus.pass.slice(0, 3)"
+                  v-for="finding in findingsByStatus.pass"
                   :key="finding.id"
                   class="finding-card pass"
                 >
@@ -473,9 +473,6 @@ loadPatterns()
                   </div>
                   <p class="finding-rationale">{{ finding.rationale }}</p>
                 </div>
-                <p v-if="findingsByStatus.pass.length > 3" class="more-text">
-                  ... and {{ findingsByStatus.pass.length - 3 }} more passes
-                </p>
               </div>
             </div>
           </div>
