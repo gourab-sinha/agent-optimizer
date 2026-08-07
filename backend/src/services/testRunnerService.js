@@ -78,20 +78,26 @@ export async function runTests(agentId, options = {}) {
   const criteria = criteriaResult.rows;
   console.log(`   ✓ Found ${criteria.length} rubric criteria`);
 
-  // Get test cases to run
+  // Get test cases to run (with pattern info for edge cases)
   let testCasesQuery = `
-    SELECT id, kind, title, persona, scenario, criterion_ids
-    FROM test_cases
-    WHERE agent_id = $1 AND is_deleted = false AND archived = false
+    SELECT
+      tc.id, tc.kind, tc.title, tc.persona, tc.scenario, tc.criterion_ids,
+      tc.seeded_by_pattern_id,
+      ip.description as pattern_description,
+      ip.fail_count,
+      ip.impact_score
+    FROM test_cases tc
+    LEFT JOIN issue_patterns ip ON tc.seeded_by_pattern_id = ip.id
+    WHERE tc.agent_id = $1 AND tc.is_deleted = false AND tc.archived = false
   `;
   const queryParams = [agentId];
 
   if (testCaseIds && testCaseIds.length > 0) {
-    testCasesQuery += ` AND id = ANY($2)`;
+    testCasesQuery += ` AND tc.id = ANY($2)`;
     queryParams.push(testCaseIds);
   }
 
-  testCasesQuery += ` ORDER BY kind, created_at`;
+  testCasesQuery += ` ORDER BY tc.kind, tc.created_at`;
 
   const testCasesResult = await db.query(testCasesQuery, queryParams);
   const testCases = testCasesResult.rows;
@@ -200,15 +206,26 @@ async function runSingleTest(agent, agentPrompt, testCase, criteria, testRunId, 
     ? JSON.parse(testCase.persona)
     : testCase.persona;
 
+  // Get relevant criteria for this test case
+  const testCriteria = criteria.filter(c => testCase.criterion_ids?.includes(c.id));
+
+  // For edge cases, provide the criteria as "expected failures" to simulation
+  // Also include pattern context if available
+  const expectedFailures = testCase.kind === 'edge_case' ? testCriteria.map(c => ({
+    ...c,
+    pattern_description: testCase.pattern_description,
+    fail_count: testCase.fail_count,
+    impact_score: testCase.impact_score
+  })) : [];
+
   // Simulate conversation
   const conversation = await simulateConversation(
     agentPrompt,
     persona,
-    testCase.scenario
+    testCase.scenario,
+    testCase.kind,
+    expectedFailures
   );
-
-  // Get relevant criteria for this test case
-  const testCriteria = criteria.filter(c => testCase.criterion_ids?.includes(c.id));
 
   // Evaluate conversation against each criterion
   const criterionOutcomes = {};
@@ -250,19 +267,33 @@ async function runSingleTest(agent, agentPrompt, testCase, criteria, testRunId, 
 /**
  * Simulate a conversation between caller (persona) and agent
  * Uses LLM to generate realistic dialogue
- * IMPORTANT: Simulates realistic agent behavior including potential failures
+ * IMPORTANT: For edge cases, simulates agent struggling with known weaknesses
  */
-async function simulateConversation(agentPrompt, persona, scenario) {
+async function simulateConversation(agentPrompt, persona, scenario, testCaseKind = 'happy_path', expectedFailures = []) {
+  // Build context about agent weaknesses for edge cases
+  let weaknessContext = '';
+  if (testCaseKind === 'edge_case' && expectedFailures.length > 0) {
+    weaknessContext = `\n\nKNOWN AGENT WEAKNESSES (this agent has failed at these in real calls):
+${expectedFailures.map((f, i) => {
+  const criterionDesc = f.description || f.key;
+  const patternDesc = f.pattern_description || 'Observed failure pattern';
+  const failInfo = f.fail_count ? ` (failed ${f.fail_count} times, impact: ${(f.impact_score || 0).toFixed(2)})` : '';
+  return `${i + 1}. ${criterionDesc}: ${patternDesc}${failInfo}`;
+}).join('\n')}
+
+**CRITICAL**: This scenario is designed to expose these weaknesses. The agent MUST exhibit realistic struggles related to these failure patterns. Do NOT make the agent succeed perfectly - show how it struggles with these specific challenges.`;
+  }
+
   const prompt = `You are simulating a phone conversation for testing a voice AI agent.
 
-CRITICAL INSTRUCTIONS:
-- The agent is NOT perfect and may struggle with challenging scenarios
-- The agent may make mistakes, miss cues, or fail to handle edge cases
-- Generate a REALISTIC conversation, not an ideal one
-- If the scenario is difficult (impatient caller, interruptions, etc), the agent should struggle
+${testCaseKind === 'edge_case'
+  ? `**THIS IS AN EDGE CASE TEST**: The scenario is designed to challenge the agent's known weaknesses. Generate a conversation where the agent demonstrates realistic struggles and failures, NOT a perfect interaction.`
+  : `**THIS IS A HAPPY PATH TEST**: Generate a successful conversation where the agent handles the scenario well.`
+}
 
-AGENT PROMPT (how the agent SHOULD behave, but may not always):
+AGENT PROMPT (how the agent is configured):
 ${agentPrompt}
+${weaknessContext}
 
 CALLER PERSONA:
 Name: ${persona.name}
@@ -276,19 +307,27 @@ SCENARIO:
 ${scenario}
 
 Generate a realistic phone conversation with 8-12 turns (back and forth exchanges).
-Start with the agent greeting the caller.
 
-The conversation should:
-1. Follow the scenario realistically
-2. Reflect the caller's communication style and personality
-3. Test how well the agent follows their prompt (they may NOT follow it perfectly!)
-4. Include natural dialogue flow with appropriate transitions
-5. **IMPORTANT**: If the caller is challenging (impatient, interrupts, confused, etc), the agent should show realistic struggle:
-   - May not greet properly if interrupted
-   - May use filler words under pressure
-   - May forget to collect all information
-   - May fail to handle objections smoothly
-   - May not maintain perfect tone when stressed
+${testCaseKind === 'edge_case' ? `
+**EDGE CASE REQUIREMENTS**:
+- The agent MUST struggle with the challenges presented
+- Show the agent making mistakes related to the known weaknesses listed above
+- The agent should exhibit behaviors like:
+  * Missing important information the caller provides
+  * Failing to maintain proper tone under pressure
+  * Not following the script when interrupted or confused
+  * Using inappropriate language or filler words
+  * Forgetting to collect required details
+  * Mishandling objections or difficult questions
+- Make the conversation realistic but challenging - the agent should NOT handle this perfectly
+- The goal is to expose whether the agent can overcome its known weaknesses (it likely can't)
+` : `
+**HAPPY PATH REQUIREMENTS**:
+- Generate a smooth, successful conversation
+- Agent follows their prompt well
+- Caller is cooperative and scenario unfolds naturally
+- Agent collects necessary information and handles the call properly
+`}
 
 IMPORTANT: Respond with valid JSON in this exact structure:
 {
@@ -302,9 +341,11 @@ IMPORTANT: Respond with valid JSON in this exact structure:
 
   const result = await callLLM({
     prompt,
-    systemPrompt: 'You generate realistic phone conversation simulations for testing voice AI agents. Be realistic about agent limitations and failures in challenging scenarios. Output valid JSON only.',
+    systemPrompt: testCaseKind === 'edge_case'
+      ? 'You generate realistic phone conversation simulations that expose agent weaknesses. For edge cases, make the agent struggle and fail realistically based on known failure patterns. Output valid JSON only.'
+      : 'You generate realistic phone conversation simulations for testing voice AI agents. Output valid JSON only.',
     stage: 'test_execution',
-    temperature: 0.9, // Higher temperature for more realistic variation/failures
+    temperature: testCaseKind === 'edge_case' ? 1.0 : 0.8, // Higher temperature for edge cases to encourage failures
     maxTokens: 16000,
     responseFormat: 'json'
   });
