@@ -7,9 +7,23 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE TABLE companies (
+  id               TEXT PRIMARY KEY,       -- GHL companyId (agency)
+  name             TEXT,
+  access_token     TEXT NOT NULL,          -- encrypted company token
+  refresh_token    TEXT NOT NULL,
+  token_expires_at TIMESTAMPTZ,
+  user_type        TEXT DEFAULT 'Company',
+  is_deleted       BOOLEAN DEFAULT false,
+  created_at       TIMESTAMPTZ DEFAULT now(),
+  updated_at       TIMESTAMPTZ DEFAULT now()
+);
+
 CREATE TABLE locations (
   id            TEXT PRIMARY KEY,          -- GHL locationId
   name          TEXT,
+  company_id    TEXT,                      -- GHL agency / company that owns this location
+  user_type     TEXT,                      -- OAuth token class: Location | Company
   access_token  TEXT NOT NULL,             -- encrypted at rest
   refresh_token TEXT NOT NULL,
   token_expires_at TIMESTAMPTZ,
@@ -17,6 +31,10 @@ CREATE TABLE locations (
   created_at    TIMESTAMPTZ DEFAULT now(),
   updated_at    TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS idx_locations_company_id
+  ON locations (company_id)
+  WHERE is_deleted = false;
 
 CREATE TABLE agents (
   id            TEXT PRIMARY KEY,          -- GHL agentId

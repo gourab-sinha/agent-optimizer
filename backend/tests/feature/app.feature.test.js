@@ -90,4 +90,11 @@ describe('Feature: App entry (health, 404, errors)', () => {
     expect(res.body.error).toBe('TestError');
     expect(res.body.message).toBe('forced test error');
   });
+
+  it('allows HighLevel to embed the app in an iframe', async () => {
+    const res = await request(app).get('/health');
+    expect(res.headers['x-frame-options']).toBeUndefined();
+    expect(res.headers['content-security-policy'] || '').toMatch(/frame-ancestors/);
+    expect(res.headers['content-security-policy'] || '').toMatch(/gohighlevel\.com/);
+  });
 });

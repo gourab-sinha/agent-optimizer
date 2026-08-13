@@ -11,7 +11,7 @@ import ghlClient from './sdk-client.js';
 const CLIENT_ID = process.env.GHL_CLIENT_ID;
 const CLIENT_SECRET = process.env.GHL_CLIENT_SECRET;
 const REDIRECT_URI = process.env.GHL_REDIRECT_URI;
-const SCOPES = process.env.GHL_SCOPES || 'voice-ai-agents.readonly,voice-ai-agents.write,voice-ai-dashboard.readonly,voice-ai-agent-goals.readonly,voice-ai-agent-goals.write';
+const SCOPES = process.env.GHL_SCOPES || 'voice-ai-agents.readonly,voice-ai-agents.write,voice-ai-dashboard.readonly,voice-ai-agent-goals.readonly,voice-ai-agent-goals.write,oauth.readonly,oauth.write,locations.readonly';
 
 /**
  * Generate OAuth authorization URL
@@ -93,11 +93,7 @@ export async function exchangeCodeForToken(code) {
     }, null, 2));
     console.log('=================================\n');
 
-    // HighLevel doesn't always include locationId in OAuth response
-    // Use companyId as storage key if locationId is missing
-    const storageKey = data.locationId || data.companyId;
-
-    console.log(`Storage key: ${storageKey} (${data.locationId ? 'location' : 'company'}-level token)`);
+    console.log(`Token class: ${data.userType || (data.locationId ? 'Location' : 'Company')} company=${data.companyId || '-'} location=${data.locationId || '-'}`);
 
     return {
       accessToken: data.access_token,
@@ -105,11 +101,12 @@ export async function exchangeCodeForToken(code) {
       expiresIn: data.expires_in,
       tokenType: data.token_type,
       scope: data.scope,
-      // Storage key for database - may be companyId if locationId not provided
-      locationId: storageKey,
-      companyId: data.companyId,
+      locationId: data.locationId || null,
+      companyId: data.companyId || null,
       userId: data.userId,
-      userType: data.userType
+      userType: data.userType,
+      isBulkInstallation: data.isBulkInstallation === true,
+      companyName: data.companyName || null
     };
 
   } catch (error) {
@@ -162,13 +159,17 @@ export async function storeLocation(tokenData, locationInfo = {}) {
                refresh_token = $2,
                token_expires_at = $3,
                name = COALESCE($4, name),
+               company_id = COALESCE($5, company_id),
+               user_type = COALESCE($6, user_type),
                updated_at = NOW()
-           WHERE id = $5`,
+           WHERE id = $7`,
           [
             encrypt(tokenData.accessToken),
             encrypt(tokenData.refreshToken),
             expiresAt,
             locationInfo.name,
+            tokenData.companyId || null,
+            tokenData.userType || null,
             locationId
           ]
         );
@@ -177,11 +178,13 @@ export async function storeLocation(tokenData, locationInfo = {}) {
       } else {
         // Insert new location
         await client.query(
-          `INSERT INTO locations (id, name, access_token, refresh_token, token_expires_at)
-           VALUES ($1, $2, $3, $4, $5)`,
+          `INSERT INTO locations (id, name, company_id, user_type, access_token, refresh_token, token_expires_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [
             locationId,
             locationInfo.name || 'Unknown Location',
+            tokenData.companyId || null,
+            tokenData.userType || null,
             encrypt(tokenData.accessToken),
             encrypt(tokenData.refreshToken),
             expiresAt
@@ -226,44 +229,63 @@ export async function completeOAuthFlow(code, state, expectedState) {
     throw new Error('Invalid state parameter - possible CSRF attack');
   }
 
-  // Exchange code for tokens
   const tokenData = await exchangeCodeForToken(code);
+  const { isCompanyInstall, storeCompany, provisionCompanyLocations } = await import('./companyAuth.js');
 
-  // Store location and tokens
-  const location = await storeLocation(tokenData);
-
-  // Fetch and store agents from HighLevel with full configuration
-  // Use syncAgent to ensure agent_versions are created properly
-  try {
-    const { listAgents } = await import('./agents.js');
-    const { syncAgent } = await import('../services/agentSyncService.js');
-    const agentList = await listAgents(location.locationId);
-
-    console.log(`Fetched ${agentList.length} agents from HighLevel`);
-
-    // Sync each agent using the proper sync service
-    // This ensures agent_versions are created
-    for (const agentSummary of agentList) {
-      try {
-        await syncAgent(location.locationId, agentSummary.id);
-        console.log(`  ✓ Synced agent: ${agentSummary.agentName || agentSummary.name}`);
-      } catch (error) {
-        console.error(`  ✗ Failed to sync agent ${agentSummary.id}:`, error.message);
-        // Continue with other agents
-      }
-    }
-
-    console.log(`✓ Stored ${agentList.length} agents with full configuration and versions in database`);
-  } catch (error) {
-    console.error('Failed to fetch agents during OAuth:', error.message);
-    // Don't fail the OAuth flow if agent fetch fails
+  if (isCompanyInstall(tokenData) && tokenData.companyId) {
+    await storeCompany(tokenData);
+    const locationIds = await provisionCompanyLocations(tokenData.companyId);
+    await syncAgentsForLocations(locationIds);
+    return {
+      success: true,
+      companyId: tokenData.companyId,
+      locationId: locationIds[0] || null,
+      locationName: 'Agency install',
+      locationCount: locationIds.length,
+      installType: 'company'
+    };
   }
+
+  if (!tokenData.locationId) {
+    throw new Error('Location ID not found in token response');
+  }
+
+  const location = await storeLocation(tokenData);
+  await syncAgentsForLocations([location.locationId]);
 
   return {
     success: true,
     locationId: location.locationId,
-    locationName: location.name
+    locationName: location.name,
+    companyId: tokenData.companyId || null,
+    installType: 'location'
   };
+}
+
+async function syncAgentsForLocations(locationIds) {
+  if (!locationIds?.length) return;
+  try {
+    const { listAgents } = await import('./agents.js');
+    const { syncAgent } = await import('../services/agentSyncService.js');
+
+    for (const locationId of locationIds) {
+      try {
+        const agentList = await listAgents(locationId);
+        console.log(`Fetched ${agentList.length} agents for location ${locationId}`);
+        for (const agentSummary of agentList) {
+          try {
+            await syncAgent(locationId, agentSummary.id);
+          } catch (error) {
+            console.error(`  ✗ Failed to sync agent ${agentSummary.id}:`, error.message);
+          }
+        }
+      } catch (error) {
+        console.error(`Failed to fetch agents for ${locationId}:`, error.message);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to fetch agents during OAuth:', error.message);
+  }
 }
 
 /**
@@ -302,7 +324,7 @@ export async function revokeLocation(locationId) {
 export async function getInstalledLocations() {
   try {
     const result = await db.query(
-      `SELECT id, name, token_expires_at, created_at, updated_at
+      `SELECT id, name, company_id, user_type, token_expires_at, created_at, updated_at
        FROM locations
        ORDER BY created_at DESC`
     );
@@ -310,6 +332,8 @@ export async function getInstalledLocations() {
     return result.rows.map(row => ({
       locationId: row.id,
       name: row.name,
+      companyId: row.company_id,
+      userType: row.user_type,
       tokenExpiresAt: row.token_expires_at,
       installedAt: row.created_at,
       lastUpdated: row.updated_at

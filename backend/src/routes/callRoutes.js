@@ -22,13 +22,22 @@ const router = express.Router();
 router.post('/sync-agent/:agentId', async (req, res) => {
   try {
     const { agentId } = req.params;
-    const { locationId } = req.body;
+    const { locationId, companyId } = req.body || {};
 
     if (!locationId) {
       return res.status(400).json({
         success: false,
         error: 'Missing locationId'
       });
+    }
+
+    if (companyId) {
+      try {
+        const { ensureLocationFromCompany } = await import('../ghl/companyAuth.js');
+        await ensureLocationFromCompany(companyId, locationId);
+      } catch (error) {
+        console.error('Failed to mint location token before call sync:', error.response?.data || error.message);
+      }
     }
 
     const calls = await syncAgentCalls(locationId, agentId);

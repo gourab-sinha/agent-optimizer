@@ -87,7 +87,8 @@ describe('ghl/oauth', () => {
       companyId: 'co-1',
     });
     const data = await oauth.exchangeCodeForToken('code');
-    expect(data.locationId).toBe('co-1');
+    expect(data.locationId).toBeNull();
+    expect(data.companyId).toBe('co-1');
   });
 
   it('exchangeCodeForToken throws on failure', async () => {

@@ -5,6 +5,8 @@ import compression from 'compression';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 import db from './db/connection.js';
 import apiRoutes from './routes/index.js';
@@ -27,14 +29,56 @@ const HOST = process.env.HOST || '0.0.0.0';
 // Trust proxy (required for ngrok and other reverse proxies)
 app.set('trust proxy', 1);
 
-// Security headers
-app.use(helmet());
-
-// CORS
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
-  credentials: true
+// Security headers.
+// Allow HighLevel to iframe the UI (Custom JS Optimize tab / Custom Pages).
+// Disable X-Frame-Options so CSP frame-ancestors is the sole embed policy.
+app.use(helmet({
+  frameguard: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: {
+    useDefaults: true,
+    directives: {
+      frameAncestors: [
+        "'self'",
+        'https://*.gohighlevel.com',
+        'https://*.leadconnectorhq.com',
+        'https://*.msgsndr.com',
+      ],
+    },
+  },
 }));
+
+// CORS — Custom JS on app.gohighlevel.com calls /api/embed/resolve
+const ghlCorsOrigin = function ghlCorsOrigin(origin, callback) {
+  if (!origin) return callback(null, true);
+  const allowed = (
+    origin === '*'
+    || /\.gohighlevel\.com$/i.test(origin)
+    || /\.leadconnectorhq\.com$/i.test(origin)
+    || /\.msgsndr\.com$/i.test(origin)
+    || /\.ngrok-free\.app$/i.test(origin)
+    || /\.ngrok\.io$/i.test(origin)
+    || origin === 'http://localhost:5173'
+    || origin === 'http://localhost:3000'
+  );
+  callback(null, allowed ? origin : false);
+};
+
+app.use(cors({
+  origin: process.env.CORS_ORIGIN === '*' || !process.env.CORS_ORIGIN ? '*' : ghlCorsOrigin,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Version'],
+  maxAge: 86400,
+}));
+
+app.use((req, res, next) => {
+  if (req.method !== 'OPTIONS') return next();
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Version');
+  res.header('Access-Control-Max-Age', '86400');
+  return res.sendStatus(204);
+});
 
 // Compression
 app.use(compression());
@@ -48,11 +92,18 @@ if (process.env.NODE_ENV !== 'test') {
   app.use(morgan(process.env.LOG_FORMAT || 'combined'));
 }
 
-// Rate limiting
+// Rate limiting. Dev/embed reload bursts easily (iframe remounts).
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10), // 15 minutes
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
-  message: 'Too many requests from this IP, please try again later.'
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
+  max: parseInt(
+    process.env.RATE_LIMIT_MAX_REQUESTS
+      || (process.env.NODE_ENV === 'production' ? '300' : '2000'),
+    10
+  ),
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.method === 'OPTIONS' || process.env.NODE_ENV === 'test',
+  message: { success: false, error: 'Too many requests' },
 });
 
 app.use('/api/', limiter);
@@ -87,6 +138,15 @@ app.get('/health', async (req, res) => {
 
 // Mount API routes under /api prefix
 app.use('/api', apiRoutes);
+
+// Host Custom JS for the HighLevel loader (Agency Custom JS field is size-limited)
+const ghlEmbedDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../ghl-embed');
+app.use('/ghl-embed', express.static(ghlEmbedDir, {
+  setHeaders: function setEmbedHeaders(res) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'no-store');
+  },
+}));
 
 // Serve frontend (if built)
 if (process.env.FRONTEND_BUILD_PATH) {

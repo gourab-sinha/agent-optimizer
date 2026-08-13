@@ -814,6 +814,23 @@ Then open the backend public URL (e.g. `https://your-domain.com`).
 3. Backend decrypts with `GHL_SHARED_SECRET` and resolves `activeLocation`.  
 4. UI loads agents for that location.
 
+**Voice AI editor tab (Build / Deploy):**
+
+Custom JS injects an **Optimize** tab next to HighLevel’s Build / Deploy buttons on the Voice AI agent edit page. The tab loads this app for the open agent.
+
+1. Host the UI on a public HTTPS origin (same host you already use for OAuth / iframe).  
+2. Open `ghl-embed/voice-ai-optimize-tab.js` and set `CONFIG.appUrl` to that origin.  
+3. Paste the file into **Agency View → Settings → Company → Custom JavaScript** (applies to subaccounts).  
+4. Open a subaccount → **AI Agents → Voice AI → edit an agent** → click **Optimize**.
+
+The location must already be OAuth-installed. Custom JS only adds the tab; it does not grant API tokens.
+
+Embed URL the tab opens:
+
+```text
+https://YOUR_PUBLIC_URL/?embed=1&agentId=AGENT_ID&locationId=LOCATION_ID
+```
+
 **Local without iframe:**
 
 ```text
@@ -840,6 +857,7 @@ Base path: **`/api`**
 | Area | Methods / paths (summary) |
 |------|---------------------------|
 | **OAuth** | `GET /oauth/install`, `GET /oauth/callback`, `POST /oauth/decrypt-sso`, `GET /oauth/locations`, `DELETE /oauth/locations/:id` |
+| **Embed resolve** | `POST /embed/resolve` — Custom JS sends agency + location + agent; backend decides whether to show Optimize |
 | **Locations** | `POST/GET/PUT/DELETE /locations`, tokens endpoints |
 | **Agents** | CRUD `/agents`, sync `/agents/sync/:id`, `/agents/sync-location/:locationId`, config/actions/prompt |
 | **Calls** | CRUD `/calls`, sync `/calls/sync-agent/:agentId`, list by agent/location/stats |

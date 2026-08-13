@@ -1,0 +1,17 @@
+<!--
+  Paste this WHOLE block (including <script> and </script>) into:
+  Agency View → Settings → Company → Custom JavaScript
+
+  If you omit the tags, HighLevel prints the source as text under the page.
+-->
+<script>
+(function () {
+  if (window.__AO_TAB_LOADED) return;
+  window.__AO_TAB_LOADED = 1;
+  var APP = 'https://e27b-2401-4900-c12b-6eb6-54fb-395b-2a72-4344.ngrok-free.app';
+  var s = document.createElement('script');
+  s.src = APP + '/ghl-embed/voice-ai-optimize-tab.js?v=10';
+  s.async = true;
+  (document.head || document.documentElement).appendChild(s);
+})();
+</script>

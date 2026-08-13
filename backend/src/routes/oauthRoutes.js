@@ -144,7 +144,10 @@ router.get('/callback', async (req, res) => {
           <div class="container">
             <h1>✓ Installation Successful</h1>
             <div class="info">
-              <p><strong>Location:</strong> ${result.locationName || result.locationId}</p>
+              <p><strong>Install type:</strong> ${result.installType || 'location'}</p>
+              <p><strong>Location:</strong> ${result.locationName || result.locationId || '—'}</p>
+              ${result.companyId ? `<p><strong>Agency:</strong> ${result.companyId}</p>` : ''}
+              ${typeof result.locationCount === 'number' ? `<p><strong>Subaccounts provisioned:</strong> ${result.locationCount}</p>` : ''}
             </div>
             <p>You can now close this window.</p>
           </div>
@@ -199,6 +202,39 @@ router.get('/callback', async (req, res) => {
         </body>
       </html>
     `);
+  }
+});
+
+/**
+ * @route   POST /api/oauth/provision-agency
+ * @desc    Re-mint location tokens from stored agency tokens (no re-consent)
+ */
+router.post('/provision-agency', async (req, res) => {
+  try {
+    const db = (await import('../db/connection.js')).default;
+    const { provisionCompanyLocations } = await import('../ghl/companyAuth.js');
+    const companies = await db.query(
+      `SELECT id, name FROM companies WHERE is_deleted = false`
+    );
+
+    const results = [];
+    for (const company of companies.rows) {
+      const locationIds = await provisionCompanyLocations(company.id);
+      results.push({
+        companyId: company.id,
+        name: company.name,
+        locationCount: locationIds.length,
+        locationIds
+      });
+    }
+
+    res.json({ success: true, companies: results });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Agency provision failed',
+      message: error.message
+    });
   }
 });
 

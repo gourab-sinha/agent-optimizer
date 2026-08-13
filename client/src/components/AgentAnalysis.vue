@@ -36,16 +36,24 @@ const loadingPatterns = ref(false)
 // Error handling
 const error = ref('')
 
+// Track whether agent exists in database
+const agentSynced = ref<boolean | null>(null)
+
 // Get latest agent version
 async function getAgentVersion() {
-  try {
-    const response = await fetch(`/api/agents/${props.agentId}`)
-    if (!response.ok) throw new Error('Failed to get agent version')
-    const data = await response.json()
-    return data.data?.latestVersionId
-  } catch (err: any) {
-    throw new Error(`Failed to get agent version: ${err.message}`)
+  if (!props.agentId) return null
+  const response = await fetch(`/api/agents/${props.agentId}`)
+  if (response.status === 404) {
+    agentSynced.value = false
+    return null
   }
+  if (!response.ok) {
+    // Network or server error - don't assume not synced
+    throw new Error('Failed to get agent version')
+  }
+  const data = await response.json()
+  agentSynced.value = true
+  return data.data?.latestVersionId || null
 }
 
 // Load rubric for agent
@@ -56,6 +64,7 @@ async function loadRubric() {
     const versionId = await getAgentVersion()
     if (!versionId) {
       rubric.value = null
+      // Don't show error if agent simply isn't synced yet
       return
     }
 
@@ -71,7 +80,10 @@ async function loadRubric() {
       rubric.value = data.rubric
     }
   } catch (err: any) {
-    error.value = err.message
+    // Only show error if it's a real failure, not just "agent not synced"
+    if (agentSynced.value !== false) {
+      error.value = err.message
+    }
   } finally {
     loadingRubric.value = false
   }
@@ -327,7 +339,6 @@ function formatCriterionKey(key: string) {
     .join(' ')
 }
 
-// Watch tab changes
 watch(activeTab, async (newTab) => {
   if (newTab === 'calls' && !calls.value.length) {
     await loadCalls()
@@ -336,10 +347,20 @@ watch(activeTab, async (newTab) => {
   }
 })
 
-// Initial load
-loadCalls()
+watch(() => props.agentId, () => {
+  error.value = ''
+  agentSynced.value = null
+  rubric.value = null
+  calls.value = []
+  findings.value = []
+  patterns.value = []
+  selectedCall.value = null
+  if (props.agentId) {
+    loadRubric()
+  }
+})
+
 loadRubric()
-loadPatterns()
 </script>
 
 <template>
@@ -352,6 +373,14 @@ loadPatterns()
     <div v-if="error" class="error-banner">
       ⚠️ {{ error }}
       <button @click="error = ''" class="close-btn">×</button>
+    </div>
+
+    <!-- Agent Not Synced State -->
+    <div v-if="agentSynced === false && !loadingRubric" class="not-synced-state">
+      <div class="not-synced-icon">🔄</div>
+      <h4>Agent Not Synced</h4>
+      <p>This agent hasn't been synced to the optimizer yet.</p>
+      <p class="help-text">Click "Sync agent" in the header to pull agent data from HighLevel.</p>
     </div>
 
     <!-- Calls Tab -->
@@ -1043,5 +1072,31 @@ loadPatterns()
   color: #6b7280;
   font-size: 0.875rem;
   margin-bottom: 1rem;
+}
+
+.not-synced-state {
+  text-align: center;
+  padding: 3rem 1rem;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.not-synced-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+
+.not-synced-state h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.125rem;
+  color: #92400e;
+}
+
+.not-synced-state p {
+  margin: 0 0 0.5rem 0;
+  color: #78350f;
+  font-size: 0.875rem;
 }
 </style>

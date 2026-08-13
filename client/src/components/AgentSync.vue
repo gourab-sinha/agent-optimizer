@@ -1,9 +1,23 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import AgentAnalysis from './AgentAnalysis.vue'
 import AgentMetrics from './AgentMetrics.vue'
 import AgentTests from './AgentTests.vue'
 import AgentRecommendations from './AgentRecommendations.vue'
+
+const props = withDefaults(defineProps<{
+  embed?: boolean
+  initialAgentId?: string
+  initialLocationId?: string
+  initialAgentName?: string
+  initialCompanyId?: string
+}>(), {
+  embed: false,
+  initialAgentId: '',
+  initialLocationId: '',
+  initialAgentName: '',
+  initialCompanyId: '',
+})
 
 const locationId = ref('')
 const agents = ref<any[]>([])
@@ -16,6 +30,40 @@ const agentCalls = ref<Record<string, any[]>>({})
 const loadingCalls = ref<Record<string, boolean>>({})
 const syncingCalls = ref<Record<string, boolean>>({})
 const agentTabs = ref<Record<string, 'calls' | 'analysis' | 'metrics' | 'tests' | 'recommendations'>>({})
+
+const visibleAgents = computed(() => {
+  if (!props.embed || !props.initialAgentId) return agents.value
+  const match = agents.value.filter((agent) => agent.id === props.initialAgentId)
+  if (match.length) return match
+  return [{
+    id: props.initialAgentId,
+    name: props.initialAgentName || 'Voice AI Agent',
+    business_name: '',
+    config: { actions: [] },
+  }]
+})
+
+const currentEmbedAgent = computed(() => visibleAgents.value[0] || null)
+
+const displayName = computed(() => {
+  const synced = currentEmbedAgent.value?.name || ''
+  if (synced && !synced.includes('.')) return synced
+  if (props.initialAgentName && !props.initialAgentName.includes('.')) return props.initialAgentName
+  return 'Voice AI Agent'
+})
+
+const embedTab = computed(() => {
+  const id = currentEmbedAgent.value?.id
+  return id ? getAgentTab(id) : 'analysis'
+})
+
+function applyEmbedSelection() {
+  if (!props.embed || !props.initialAgentId) return
+  expandedAgent.value = props.initialAgentId
+  if (!agentTabs.value[props.initialAgentId]) {
+    agentTabs.value[props.initialAgentId] = 'analysis'
+  }
+}
 
 function getAgentTab(agentId: string) {
   return agentTabs.value[agentId] || 'calls'
@@ -70,12 +118,30 @@ async function authenticateWithSSO(ssoKey: string) {
 onMounted(async () => {
   try {
     const urlParams = new URLSearchParams(window.location.search)
-    const devLocationId = urlParams.get('locationId')
+    const devLocationId = props.initialLocationId || urlParams.get('locationId')
     const ssoKey = urlParams.get('key') || urlParams.get('ssoKey') || urlParams.get('SSO')
 
     if (devLocationId) {
       locationId.value = devLocationId
+      applyEmbedSelection()
+      if (props.embed) {
+        const companyId = props.initialCompanyId || urlParams.get('companyId') || ''
+        const agentId = props.initialAgentId || urlParams.get('agentId') || ''
+        const qs = new URLSearchParams({ locationId: devLocationId })
+        if (companyId) qs.set('companyId', companyId)
+        if (agentId) qs.set('agentId', agentId)
+        try {
+          await fetch(`/api/embed/resolve?${qs.toString()}`)
+        } catch {
+          /* resolve is best-effort; sync below still mints */
+        }
+      }
       await loadAgents()
+      const missing = props.embed && props.initialAgentId
+        && !agents.value.some((a) => a.id === props.initialAgentId)
+      if (props.embed && (agents.value.length === 0 || missing)) {
+        await syncAgents()
+      }
     } else if (ssoKey && ssoKey !== '{{sso_key}}') {
       await authenticateWithSSO(ssoKey)
     } else if (window.parent !== window) {
@@ -88,6 +154,18 @@ onMounted(async () => {
   }
 })
 
+watch(
+  () => [props.initialAgentId, props.initialLocationId, props.initialAgentName],
+  async ([agentId, nextLocationId]) => {
+    if (!props.embed) return
+    if (nextLocationId && nextLocationId !== locationId.value) {
+      locationId.value = nextLocationId
+      await loadAgents()
+    }
+    if (agentId) applyEmbedSelection()
+  }
+)
+
 async function loadAgents() {
   if (!locationId.value) return
   loading.value = true
@@ -99,6 +177,7 @@ async function loadAgents() {
     if (data.success) {
       agents.value = data.data
       lastSync.value = new Date()
+      applyEmbedSelection()
     }
   } catch (err: any) {
     error.value = `Failed to load agents: ${err.message}`
@@ -111,9 +190,17 @@ async function syncAgents() {
   if (!locationId.value) return
   syncing.value = true
   try {
-    const response = await fetch(`/api/agents/sync-location/${locationId.value}`, { method: 'POST' })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const data = await response.json()
+    const companyId = props.initialCompanyId || new URLSearchParams(window.location.search).get('companyId') || ''
+    const qs = companyId ? `?companyId=${encodeURIComponent(companyId)}` : ''
+    const response = await fetch(`/api/agents/sync-location/${locationId.value}${qs}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ companyId: companyId || undefined }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(data.hint || data.error || `HTTP ${response.status}`)
+    }
     if (data.success) {
       agents.value = data.data
       lastSync.value = new Date()
@@ -153,7 +240,10 @@ async function syncAgentCalls(agentId: string) {
     const response = await fetch(`/api/calls/sync-agent/${agentId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ locationId: locationId.value })
+      body: JSON.stringify({
+        locationId: locationId.value,
+        companyId: props.initialCompanyId || new URLSearchParams(window.location.search).get('companyId') || undefined,
+      })
     })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const data = await response.json()
@@ -186,13 +276,126 @@ function formatCallDate(dateStr: string) {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+  <!-- Full-height embed workspace inside the HighLevel builder iframe -->
+  <div v-if="embed" class="flex h-full min-h-0 w-full flex-col bg-white text-slate-900">
+    <header class="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-4">
+      <div class="min-w-0">
+        <p class="truncate text-sm font-semibold">{{ displayName }}</p>
+        <p class="truncate text-[11px] text-slate-500">
+          {{ lastSync ? `Synced ${formatDate(lastSync)}` : 'Optimizer' }}
+        </p>
+      </div>
+      <div class="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          class="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          :disabled="syncing || loading || !locationId"
+          @click="syncAgents"
+        >
+          {{ syncing ? 'Syncing…' : 'Sync agent' }}
+        </button>
+        <button
+          v-if="currentEmbedAgent"
+          type="button"
+          class="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+          :disabled="syncingCalls[currentEmbedAgent.id]"
+          @click="syncAgentCalls(currentEmbedAgent.id)"
+        >
+          {{ syncingCalls[currentEmbedAgent.id] ? 'Syncing calls…' : 'Sync calls' }}
+        </button>
+      </div>
+    </header>
+
+    <div v-if="error" class="shrink-0 border-b border-red-100 bg-red-50 px-4 py-2 text-sm text-red-700">
+      {{ error }}
+    </div>
+
+    <nav v-if="currentEmbedAgent" class="flex shrink-0 gap-1 overflow-x-auto border-b border-slate-200 px-3">
+      <button
+        v-for="tab in [
+          { id: 'analysis', label: 'Analysis' },
+          { id: 'calls', label: 'Calls' },
+          { id: 'metrics', label: 'Metrics' },
+          { id: 'tests', label: 'Tests' },
+          { id: 'recommendations', label: 'Recommendations' },
+        ]"
+        :key="tab.id"
+        type="button"
+        class="border-b-2 px-3 py-2 text-sm font-medium whitespace-nowrap"
+        :class="embedTab === tab.id ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-800'"
+        @click="setAgentTab(currentEmbedAgent.id, tab.id as any)"
+      >
+        {{ tab.label }}
+      </button>
+    </nav>
+
+    <main class="min-h-0 flex-1 overflow-auto bg-slate-50">
+      <div v-if="loading || syncing" class="flex h-full items-center justify-center text-sm text-slate-500">
+        {{ syncing ? 'Syncing agent…' : 'Loading agent…' }}
+      </div>
+      <div v-else-if="currentEmbedAgent" class="h-full p-4">
+        <div v-if="embedTab === 'calls'" class="space-y-3">
+          <div v-if="loadingCalls[currentEmbedAgent.id]" class="py-16 text-center text-sm text-slate-500">Loading calls…</div>
+          <div v-else-if="agentCalls[currentEmbedAgent.id]?.length" class="space-y-2">
+            <div
+              v-for="call in agentCalls[currentEmbedAgent.id]"
+              :key="call.id"
+              class="rounded-lg border border-slate-200 bg-white p-4"
+            >
+              <p class="text-sm text-slate-900">{{ call.summary || 'No summary available' }}</p>
+              <div class="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
+                <span>{{ call.kind }}</span>
+                <span>{{ formatCallDate(call.created_at_ghl) }}</span>
+                <span>{{ formatDuration(call.duration_s) }}</span>
+              </div>
+            </div>
+          </div>
+          <div v-else class="rounded-lg border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">
+            No call logs yet. Sync calls to pull them from HighLevel.
+          </div>
+        </div>
+        <AgentAnalysis
+          v-else-if="embedTab === 'analysis'"
+          :key="`${currentEmbedAgent.id}-${lastSync?.getTime() || 0}`"
+          :agent-id="currentEmbedAgent.id"
+          :agent-name="displayName"
+          :location-id="locationId"
+        />
+        <AgentMetrics
+          v-else-if="embedTab === 'metrics'"
+          :agent-id="currentEmbedAgent.id"
+          :agent-name="displayName"
+          :location-id="locationId"
+        />
+        <AgentTests
+          v-else-if="embedTab === 'tests'"
+          :agent-id="currentEmbedAgent.id"
+        />
+        <AgentRecommendations
+          v-else-if="embedTab === 'recommendations'"
+          :agent-id="currentEmbedAgent.id"
+        />
+      </div>
+      <div v-else class="flex h-full items-center justify-center text-sm text-slate-500">
+        Sync this location to load the agent.
+      </div>
+    </main>
+  </div>
+
+  <div
+    v-else
+    class="bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 min-h-screen"
+  >
+    <div
+      class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8"
+    >
       <!-- Header -->
       <div class="mb-8">
         <div class="flex items-center justify-between">
           <div>
-            <h1 class="text-3xl font-bold text-gray-900">Agent Optimizer</h1>
+            <h1 class="text-3xl font-bold text-gray-900">
+              Agent Optimizer
+            </h1>
             <p v-if="lastSync" class="text-sm text-gray-600 mt-2">Last synced: {{ formatDate(lastSync) }}</p>
           </div>
           <button
@@ -240,14 +443,15 @@ function formatCallDate(dateStr: string) {
       </div>
 
       <!-- Agents Cards -->
-      <div v-else-if="agents.length > 0" class="space-y-4">
-        <div v-for="agent in agents" :key="agent.id" class="group">
+      <div v-else-if="visibleAgents.length > 0" class="space-y-4">
+        <div v-for="agent in visibleAgents" :key="agent.id" class="group">
           <!-- Agent Card -->
           <div class="bg-white rounded-2xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-100">
             <div class="p-6">
               <div class="flex items-center justify-between">
                 <div class="flex items-center space-x-4 flex-1">
                   <button
+                    v-if="!embed"
                     @click="toggleAgent(agent.id)"
                     class="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 transition-all group/btn"
                   >
@@ -304,7 +508,7 @@ function formatCallDate(dateStr: string) {
             </div>
 
             <!-- Expandable Section with Tabs -->
-            <div v-if="expandedAgent === agent.id" class="border-t border-gray-100 bg-gradient-to-br from-slate-50 to-blue-50">
+            <div v-if="embed || expandedAgent === agent.id" class="border-t border-gray-100 bg-gradient-to-br from-slate-50 to-blue-50">
               <div class="p-6">
                 <!-- Tab Navigation -->
                 <div class="flex gap-2 mb-5">

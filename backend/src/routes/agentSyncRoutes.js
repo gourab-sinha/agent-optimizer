@@ -52,18 +52,35 @@ router.post('/sync/:agentId', async (req, res) => {
 router.post('/sync-location/:locationId', async (req, res) => {
   try {
     const { locationId } = req.params;
+    const companyId = req.body?.companyId || req.query.companyId;
 
-    // Verify location exists and is installed (simple auth check)
     const db = (await import('../db/connection.js')).default;
-    const locationCheck = await db.query(
+    let locationCheck = await db.query(
       'SELECT id FROM locations WHERE id = $1 AND is_deleted = false',
       [locationId]
     );
 
+    if (locationCheck.rows.length === 0 && companyId) {
+      try {
+        const { ensureLocationFromCompany } = await import('../ghl/companyAuth.js');
+        await ensureLocationFromCompany(companyId, locationId);
+        locationCheck = await db.query(
+          'SELECT id FROM locations WHERE id = $1 AND is_deleted = false',
+          [locationId]
+        );
+      } catch (error) {
+        console.error('Failed to mint location token during sync:', error.response?.data || error.message);
+      }
+    }
+
     if (locationCheck.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        error: 'Location not found or app not installed'
+        error: 'Location not found or app not installed',
+        hint: 'The database has no OAuth token for this subaccount. Install once as the agency, then retry Sync.',
+        installPath: '/api/oauth/install',
+        locationId,
+        companyId: companyId || null
       });
     }
 

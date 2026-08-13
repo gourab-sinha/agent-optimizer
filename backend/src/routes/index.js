@@ -8,6 +8,8 @@ import analysisRoutes from './analysisRoutes.js';
 import patternRoutes from './patternRoutes.js';
 import testRoutes from './testRoutes.js';
 import recommendationRoutes from './recommendations.js';
+import embedRoutes from './embedRoutes.js';
+import webhookRoutes from './webhookRoutes.js';
 
 const router = express.Router();
 
@@ -28,6 +30,8 @@ const router = express.Router();
 
 // OAuth routes
 router.use('/oauth', oauthRoutes);
+router.use('/embed', embedRoutes);
+router.use('/webhooks', webhookRoutes);
 
 // Entity routes
 router.use('/locations', locationRoutes);
