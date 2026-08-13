@@ -848,13 +848,8 @@ h1 { margin: 2px 0 4px; font-size: 20px; }
   box-shadow: 0 1px 1px rgba(16, 24, 40, .03);
 }
 
-.row:nth-child(even) {
-  background: #f8fafc;
-}
-
 .row:hover {
   border-color: #cbd5e1;
-  background: #fff;
 }
 
 .row.picked {
