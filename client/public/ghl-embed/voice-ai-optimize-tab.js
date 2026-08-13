@@ -353,6 +353,26 @@
     var style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = [
+      '#' + CONFIG.tabId + '-track{',
+      '  display:none;position:fixed;pointer-events:none;z-index:10048;',
+      '}',
+      '#' + CONFIG.tabId + '-track[data-ao-ready="true"]{display:block;}',
+      'body.ao-tabs-ready [data-testid="builder-tab-switch"]{',
+      '  border-top-right-radius:0 !important;border-bottom-right-radius:0 !important;',
+      '}',
+      'body.ao-optimize-on [data-testid="tab-build"],',
+      'body.ao-optimize-on [data-testid="tab-deploy"]{',
+      '  background:transparent !important;color:#374151 !important;',
+      '  box-shadow:none !important;',
+      '}',
+      'body.ao-optimize-on [data-testid="tab-build"] svg,',
+      'body.ao-optimize-on [data-testid="tab-deploy"] svg{',
+      '  color:#374151 !important;',
+      '}',
+      'body.ao-optimize-on [data-testid="builder-tab-switch"] [class*="indicator"],',
+      'body.ao-optimize-on [data-testid="builder-tab-switch"] [class*="active-pill"]{',
+      '  opacity:0 !important;',
+      '}',
       '#' + CONFIG.tabId + '{',
       '  display:none;box-sizing:border-box;pointer-events:auto !important;cursor:pointer;',
       '  font-family:inherit;align-items:center;justify-content:center;gap:6px;',
@@ -364,7 +384,7 @@
       '  box-shadow:0 1px 2px rgba(16,24,40,.08);',
       '}',
       '#' + CONFIG.tabId + '[' + ACTIVE_ATTR + '="false"]{',
-      '  background:#dde0e6 !important;color:#374151 !important;box-shadow:none;',
+      '  background:transparent !important;color:#374151 !important;box-shadow:none;',
       '}',
       '#' + CONFIG.panelId + '{display:none;background:#fff;overflow:hidden;pointer-events:auto;}',
       '#' + CONFIG.panelId + '[' + ACTIVE_ATTR + '="true"]{display:block;}',
@@ -393,6 +413,18 @@
     return 0;
   }
 
+  function paintNativeTabs(optimizeOn) {
+    var pair = findBuildDeploy();
+    if (!pair) return;
+    [pair.build, pair.deploy].forEach(function (el) {
+      if (!el) return;
+      if (optimizeOn) {
+        el.setAttribute('aria-pressed', 'false');
+        el.classList.remove('text-blue-600', 'bg-white', 'shadow-sm');
+      }
+    });
+  }
+
   function styleOptimizeTab(tab, active) {
     if (!tab) return;
     tab.className = 'builder-tab-btn relative z-[1] flex cursor-pointer items-center justify-center gap-1.5 rounded-md border-0 px-4 py-1.5 text-sm font-medium transition-colors duration-200';
@@ -400,11 +432,24 @@
     tab.setAttribute('aria-pressed', active ? 'true' : 'false');
     if (active) document.body.classList.add('ao-optimize-on');
     else document.body.classList.remove('ao-optimize-on');
+    paintNativeTabs(active);
+  }
+
+  function ensureTabTrack() {
+    var id = CONFIG.tabId + '-track';
+    var track = document.getElementById(id);
+    if (track) return track;
+    track = document.createElement('div');
+    track.id = id;
+    track.setAttribute('data-ao-ready', 'false');
+    document.body.appendChild(track);
+    return track;
   }
 
   function positionFloatingTab() {
     var tab = document.getElementById(CONFIG.tabId);
     if (!tab) return;
+    var track = ensureTabTrack();
     tab.style.position = 'fixed';
     tab.style.zIndex = '10050';
     tab.style.minWidth = '0';
@@ -412,20 +457,36 @@
     tab.style.pointerEvents = 'auto';
     var sw = document.querySelector('[data-testid="builder-tab-switch"]');
     var pair = findBuildDeploy();
-    var ref = (pair && pair.build) || sw;
+    var ref = (pair && (pair.deploy || pair.build)) || sw;
     if (sw && ref) {
       var switchBox = sw.getBoundingClientRect();
       var refBox = ref.getBoundingClientRect();
+      var cs = window.getComputedStyle(ref);
+      var swCs = window.getComputedStyle(sw);
+      var tabWidth = Math.max(Math.round(refBox.width), 88);
+      var padRight = Math.max(0, Math.round(switchBox.right - refBox.right));
+      var left = Math.round(refBox.right);
       tab.style.top = Math.round(refBox.top) + 'px';
-      tab.style.left = Math.round(switchBox.right + 6) + 'px';
+      tab.style.left = left + 'px';
       tab.style.height = Math.round(refBox.height) + 'px';
-      tab.style.width = 'auto';
-      tab.style.padding = '0 14px';
-      tab.style.borderRadius = window.getComputedStyle(ref).borderRadius || '8px';
+      tab.style.width = tabWidth + 'px';
+      tab.style.padding = cs.padding || '0 14px';
+      tab.style.fontSize = cs.fontSize || '14px';
+      tab.style.fontWeight = cs.fontWeight || '500';
+      tab.style.borderRadius = cs.borderRadius || '6px';
       tab.style.right = 'auto';
+
+      track.style.top = Math.round(switchBox.top) + 'px';
+      track.style.left = Math.round(switchBox.right - 1) + 'px';
+      track.style.height = Math.round(switchBox.height) + 'px';
+      track.style.width = Math.round(tabWidth + padRight + 1) + 'px';
+      track.style.background = swCs.backgroundColor || '#dde0e6';
+      track.style.borderRadius = '0 ' + (swCs.borderTopRightRadius || '8px') + ' ' + (swCs.borderBottomRightRadius || '8px') + ' 0';
+      track.setAttribute('data-ao-ready', tab.getAttribute('data-ao-ready') || 'false');
       styleOptimizeTab(tab, state.active);
       return;
     }
+    track.setAttribute('data-ao-ready', 'false');
     tab.style.top = '72px';
     tab.style.right = '24px';
     tab.style.left = 'auto';
@@ -669,32 +730,38 @@
     rememberFullCanvas();
     var tab = ensureFloatingTab();
     tab.setAttribute('data-ao-ready', 'true');
+    document.body.classList.add('ao-tabs-ready');
     positionFloatingTab();
   }
 
   function hideTab() {
     state.active = false;
     var tab = document.getElementById(CONFIG.tabId);
+    var track = document.getElementById(CONFIG.tabId + '-track');
     var panel = document.getElementById(CONFIG.panelId);
     if (tab) {
       tab.setAttribute('data-ao-ready', 'false');
       tab.setAttribute(ACTIVE_ATTR, 'false');
       styleOptimizeTab(tab, false);
     }
+    if (track) track.setAttribute('data-ao-ready', 'false');
     if (panel) {
       panel.setAttribute(ACTIVE_ATTR, 'false');
       panel.style.display = 'none';
     }
     document.body.classList.remove('ao-optimize-on');
+    document.body.classList.remove('ao-tabs-ready');
     restoreBuildLayout();
   }
 
   function teardown() {
     hideTab();
     var tab = document.getElementById(CONFIG.tabId);
+    var track = document.getElementById(CONFIG.tabId + '-track');
     var bar = document.getElementById(CONFIG.tabId + '-bar');
     var panel = document.getElementById(CONFIG.panelId);
     if (tab) tab.remove();
+    if (track) track.remove();
     if (bar) bar.remove();
     if (panel) panel.remove();
   }
