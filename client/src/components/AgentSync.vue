@@ -26,12 +26,16 @@ const loading = ref(false)
 const syncing = ref(false)
 const error = ref('')
 const lastSync = ref<Date | null>(null)
+const lastCallSync = ref<Date | null>(null)
+const callsPulled = ref(false)
 const analysisKey = ref(0)
 const expandedAgent = ref<string | null>(null)
 const agentCalls = ref<Record<string, any[]>>({})
 const loadingCalls = ref<Record<string, boolean>>({})
 const syncingCalls = ref<Record<string, boolean>>({})
-const agentTabs = ref<Record<string, 'calls' | 'analysis' | 'metrics' | 'tests' | 'recommendations'>>({})
+type WorkspaceTab = 'overview' | 'calls' | 'analysis' | 'metrics' | 'tests' | 'recommendations'
+const agentTabs = ref<Record<string, WorkspaceTab>>({})
+const setupStep = ref<'idle' | 'connect' | 'agent' | 'calls' | 'ready'>('idle')
 
 const visibleAgents = computed(() => {
   if (!props.embed || !props.initialAgentId) return agents.value
@@ -56,23 +60,37 @@ const displayName = computed(() => {
 
 const embedTab = computed(() => {
   const id = currentEmbedAgent.value?.id
-  return id ? getAgentTab(id) : 'analysis'
+  return id ? getAgentTab(id) : 'overview'
 })
+
+const embedCalls = computed(() => {
+  const id = currentEmbedAgent.value?.id
+  return id ? (agentCalls.value[id] || []) : []
+})
+
+const isBootstrapping = computed(() =>
+  props.embed && (setupStep.value === 'connect' || setupStep.value === 'agent' || setupStep.value === 'calls')
+)
 
 function applyEmbedSelection() {
   if (!props.embed || !props.initialAgentId) return
   expandedAgent.value = props.initialAgentId
   if (!agentTabs.value[props.initialAgentId]) {
-    agentTabs.value[props.initialAgentId] = 'analysis'
+    agentTabs.value[props.initialAgentId] = 'overview'
   }
 }
 
 function getAgentTab(agentId: string) {
-  return agentTabs.value[agentId] || (props.embed ? 'analysis' : 'calls')
+  return agentTabs.value[agentId] || (props.embed ? 'overview' : 'calls')
 }
 
-function setAgentTab(agentId: string, tab: 'calls' | 'analysis' | 'metrics' | 'tests' | 'recommendations') {
+function setAgentTab(agentId: string, tab: WorkspaceTab) {
   agentTabs.value[agentId] = tab
+}
+
+function selectEmbedTab(tabId: string) {
+  if (!currentEmbedAgent.value) return
+  setAgentTab(currentEmbedAgent.value.id, tabId as WorkspaceTab)
 }
 
 // SSO Authentication
@@ -128,13 +146,9 @@ onMounted(async () => {
       companyId.value = props.initialCompanyId || urlParams.get('companyId') || companyId.value
       applyEmbedSelection()
       if (props.embed) {
-        await resolveEmbedContext()
-      }
-      await loadAgents()
-      const missing = props.embed && props.initialAgentId
-        && !agents.value.some((a) => a.id === props.initialAgentId)
-      if (props.embed && (agents.value.length === 0 || missing)) {
-        await syncAgents()
+        await bootstrapEmbedWorkspace()
+      } else {
+        await loadAgents()
       }
     } else if (ssoKey && ssoKey !== '{{sso_key}}') {
       await authenticateWithSSO(ssoKey)
@@ -176,6 +190,28 @@ async function resolveEmbedContext() {
   } catch {
     return null
   }
+}
+
+async function bootstrapEmbedWorkspace() {
+  setupStep.value = 'connect'
+  error.value = ''
+  await resolveEmbedContext()
+
+  setupStep.value = 'agent'
+  await syncAgents()
+  if (!agents.value.length) {
+    await loadAgents()
+  }
+  applyEmbedSelection()
+
+  setupStep.value = 'calls'
+  const agentId = currentEmbedAgent.value?.id || props.initialAgentId
+  if (agentId) {
+    await loadAgentCalls(agentId)
+    await syncAgentCalls(agentId)
+  }
+
+  setupStep.value = 'ready'
 }
 
 async function loadAgents() {
@@ -252,7 +288,9 @@ async function loadAgentCalls(agentId: string) {
     const response = await fetch(`/api/calls/agent/${agentId}`)
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const data = await response.json()
-    if (data.success) agentCalls.value[agentId] = data.data
+    agentCalls.value[agentId] = data.success ? (data.data || []) : []
+  } catch {
+    if (!agentCalls.value[agentId]) agentCalls.value[agentId] = []
   } finally {
     loadingCalls.value[agentId] = false
   }
@@ -275,9 +313,12 @@ async function syncAgentCalls(agentId: string) {
     if (!response.ok) {
       throw new Error(data.message || data.error || `HTTP ${response.status}`)
     }
-    if (data.success) agentCalls.value[agentId] = data.data
+    agentCalls.value[agentId] = data.success ? (data.data || []) : []
+    lastCallSync.value = new Date()
+    callsPulled.value = true
   } catch (err: any) {
     error.value = `Call sync failed: ${err.message}`
+    callsPulled.value = true
   } finally {
     syncingCalls.value[agentId] = false
   }
@@ -307,108 +348,156 @@ function formatCallDate(dateStr: string) {
 
 <template>
   <!-- Full-height embed workspace inside the HighLevel builder iframe -->
-  <div v-if="embed" class="flex h-full min-h-0 w-full flex-col bg-white text-slate-900">
-    <header class="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-4">
+  <div v-if="embed" class="ao-workspace">
+    <header class="ao-workspace-header">
       <div class="min-w-0">
-        <p class="truncate text-sm font-semibold">{{ displayName }}</p>
-        <p class="truncate text-[11px] text-slate-500">
-          {{ lastSync ? `Synced ${formatDate(lastSync)}` : 'Optimizer' }}
-        </p>
+        <p class="ao-kicker">Optimize</p>
       </div>
-      <div class="flex shrink-0 items-center gap-2">
-        <button
-          type="button"
-          class="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          :disabled="syncing || loading || !locationId"
-          @click="syncAgents"
-        >
-          {{ syncing ? 'Syncing…' : 'Sync agent' }}
-        </button>
-        <button
-          v-if="currentEmbedAgent"
-          type="button"
-          class="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          :disabled="syncingCalls[currentEmbedAgent.id]"
-          @click="syncAgentCalls(currentEmbedAgent.id)"
-        >
-          {{ syncingCalls[currentEmbedAgent.id] ? 'Syncing calls…' : 'Sync calls' }}
-        </button>
-      </div>
+      <button
+        v-if="currentEmbedAgent && !isBootstrapping"
+        type="button"
+        class="ao-btn ao-btn-ghost"
+        :disabled="syncing || !!syncingCalls[currentEmbedAgent.id] || !locationId"
+        @click="bootstrapEmbedWorkspace"
+      >
+        {{ syncing || syncingCalls[currentEmbedAgent.id] ? 'Refreshing…' : 'Refresh' }}
+      </button>
     </header>
 
-    <div v-if="error" class="shrink-0 border-b border-red-100 bg-red-50 px-4 py-2 text-sm text-red-700">
-      {{ error }}
-    </div>
+    <div v-if="error" class="ao-banner ao-banner-error">{{ error }}</div>
 
-    <nav v-if="currentEmbedAgent" class="ao-embed-tabs">
+    <nav class="ao-tabs" aria-label="Optimizer sections">
       <button
         v-for="tab in [
-          { id: 'analysis', label: 'Analysis' },
+          { id: 'overview', label: 'Overview' },
           { id: 'calls', label: 'Calls' },
-          { id: 'metrics', label: 'Metrics' },
+          { id: 'analysis', label: 'Analysis' },
           { id: 'tests', label: 'Tests' },
-          { id: 'recommendations', label: 'Recommendations' },
+          { id: 'recommendations', label: 'Improve' },
         ]"
         :key="tab.id"
         type="button"
-        :class="embedTab === tab.id ? 'is-active' : ''"
-        @click="setAgentTab(currentEmbedAgent.id, tab.id as any)"
+        :class="{ 'is-active': embedTab === tab.id }"
+        @click="selectEmbedTab(tab.id)"
       >
         {{ tab.label }}
       </button>
     </nav>
 
-    <main class="min-h-0 flex-1 overflow-auto bg-slate-50">
-      <div v-if="loading || syncing" class="flex h-full items-center justify-center text-sm text-slate-500">
-        {{ syncing ? 'Syncing agent…' : 'Loading agent…' }}
-      </div>
-      <div v-else-if="currentEmbedAgent" class="h-full p-4">
-        <div v-if="embedTab === 'calls'" class="space-y-3">
-          <div v-if="loadingCalls[currentEmbedAgent.id]" class="py-16 text-center text-sm text-slate-500">Loading calls…</div>
-          <div v-else-if="agentCalls[currentEmbedAgent.id]?.length" class="space-y-2">
-            <div
-              v-for="call in agentCalls[currentEmbedAgent.id]"
-              :key="call.id"
-              class="rounded-lg border border-slate-200 bg-white p-4"
+    <main class="ao-main">
+      <section v-if="isBootstrapping" class="ao-setup">
+        <p class="ao-setup-title">Getting the optimizer ready</p>
+        <p class="ao-setup-copy">First visit for this agent — we sync the configuration and pull call history from HighLevel.</p>
+        <ol class="ao-steps">
+          <li :class="{ done: setupStep !== 'connect', current: setupStep === 'connect' }">Connect this location</li>
+          <li :class="{ done: setupStep === 'calls' || setupStep === 'ready', current: setupStep === 'agent' }">Sync agent configuration</li>
+          <li :class="{ done: setupStep === 'ready', current: setupStep === 'calls' }">Pull call history</li>
+        </ol>
+      </section>
+
+      <section v-else-if="embedTab === 'overview'" class="ao-overview">
+        <div class="ao-stat-row">
+          <article class="ao-stat">
+            <p class="ao-stat-label">Calls</p>
+            <p class="ao-stat-value">{{ embedCalls.length }}</p>
+            <p class="ao-stat-meta">{{ callsPulled ? (lastCallSync ? `Pulled ${formatDate(lastCallSync)}` : 'Pulled from HighLevel') : 'Not pulled yet' }}</p>
+          </article>
+          <article class="ao-stat">
+            <p class="ao-stat-label">Agent</p>
+            <p class="ao-stat-value">{{ lastSync ? 'Synced' : 'Ready' }}</p>
+            <p class="ao-stat-meta">{{ lastSync ? formatDate(lastSync) : 'Using current builder agent' }}</p>
+          </article>
+          <article class="ao-stat">
+            <p class="ao-stat-label">Next step</p>
+            <p class="ao-stat-value">{{ embedCalls.length ? 'Analyze' : 'Get calls' }}</p>
+            <p class="ao-stat-meta">{{ embedCalls.length ? 'Score conversations' : 'Need at least one call' }}</p>
+          </article>
+        </div>
+
+        <div v-if="!embedCalls.length" class="ao-empty">
+          <h2>No calls to analyze yet</h2>
+          <p>
+            This is expected on a first visit if the agent has not taken live or test calls.
+            Place a call from <strong>Deploy</strong>, then refresh. Empty call history is not a tab bug —
+            HighLevel has nothing to pull yet.
+          </p>
+          <div class="ao-empty-actions">
+            <button
+              type="button"
+              class="ao-btn ao-btn-primary"
+              :disabled="!currentEmbedAgent || !!syncingCalls[currentEmbedAgent.id]"
+              @click="currentEmbedAgent && syncAgentCalls(currentEmbedAgent.id)"
             >
-              <p class="text-sm text-slate-900">{{ call.summary || 'No summary available' }}</p>
-              <div class="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
-                <span>{{ call.kind }}</span>
-                <span>{{ formatCallDate(call.created_at_ghl) }}</span>
-                <span>{{ formatDuration(call.duration_s) }}</span>
-              </div>
-            </div>
-          </div>
-          <div v-else class="rounded-lg border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">
-            No call logs yet. Sync calls to pull them from HighLevel.
+              {{ currentEmbedAgent && syncingCalls[currentEmbedAgent.id] ? 'Pulling calls…' : 'Pull calls now' }}
+            </button>
+            <button type="button" class="ao-btn ao-btn-ghost" @click="currentEmbedAgent && setAgentTab(currentEmbedAgent.id, 'calls')">
+              View Calls tab
+            </button>
           </div>
         </div>
+
+        <div v-else class="ao-ready">
+          <h2>{{ embedCalls.length }} call{{ embedCalls.length === 1 ? '' : 's' }} ready</h2>
+          <p>Run analysis to score conversations, then use Improve for recommended prompt and action changes.</p>
+          <div class="ao-empty-actions">
+            <button type="button" class="ao-btn ao-btn-primary" @click="currentEmbedAgent && setAgentTab(currentEmbedAgent.id, 'analysis')">
+              Analyze calls
+            </button>
+            <button type="button" class="ao-btn ao-btn-ghost" @click="currentEmbedAgent && setAgentTab(currentEmbedAgent.id, 'calls')">
+              Review call log
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section v-else-if="currentEmbedAgent && embedTab === 'calls'" class="ao-calls">
+        <div v-if="loadingCalls[currentEmbedAgent.id] || syncingCalls[currentEmbedAgent.id]" class="ao-muted">
+          {{ syncingCalls[currentEmbedAgent.id] ? 'Pulling calls from HighLevel…' : 'Loading calls…' }}
+        </div>
+        <div v-else-if="embedCalls.length" class="ao-call-list">
+          <article v-for="call in embedCalls" :key="call.id" class="ao-call">
+            <p class="ao-call-summary">{{ call.summary || 'No summary available' }}</p>
+            <p class="ao-call-meta">
+              <span>{{ call.kind || 'call' }}</span>
+              <span>{{ formatCallDate(call.created_at_ghl) }}</span>
+              <span>{{ formatDuration(call.duration_s) }}</span>
+            </p>
+          </article>
+        </div>
+        <div v-else class="ao-empty">
+          <h2>No call logs in HighLevel</h2>
+          <p>
+            We already tried to pull calls for this agent. HighLevel returned none.
+            Make a test or live call, then pull again.
+          </p>
+          <button
+            type="button"
+            class="ao-btn ao-btn-primary"
+            :disabled="!!syncingCalls[currentEmbedAgent.id]"
+            @click="syncAgentCalls(currentEmbedAgent.id)"
+          >
+            {{ syncingCalls[currentEmbedAgent.id] ? 'Pulling calls…' : 'Pull calls now' }}
+          </button>
+        </div>
+      </section>
+
+      <section v-else-if="currentEmbedAgent && embedTab === 'analysis'" class="ao-panel">
         <AgentAnalysis
-          v-else-if="embedTab === 'analysis'"
           :key="`${currentEmbedAgent.id}-${analysisKey}`"
           :agent-id="currentEmbedAgent.id"
           :agent-name="displayName"
           :location-id="locationId"
           compact
         />
-        <AgentMetrics
-          v-else-if="embedTab === 'metrics'"
-          :agent-id="currentEmbedAgent.id"
-          :agent-name="displayName"
-          :location-id="locationId"
-        />
-        <AgentTests
-          v-else-if="embedTab === 'tests'"
-          :agent-id="currentEmbedAgent.id"
-        />
-        <AgentRecommendations
-          v-else-if="embedTab === 'recommendations'"
-          :agent-id="currentEmbedAgent.id"
-        />
-      </div>
-      <div v-else class="flex h-full items-center justify-center text-sm text-slate-500">
-        Sync this location to load the agent.
-      </div>
+      </section>
+
+      <section v-else-if="currentEmbedAgent && embedTab === 'tests'" class="ao-panel">
+        <AgentTests :agent-id="currentEmbedAgent.id" />
+      </section>
+
+      <section v-else-if="currentEmbedAgent && embedTab === 'recommendations'" class="ao-panel">
+        <AgentRecommendations :agent-id="currentEmbedAgent.id" />
+      </section>
     </main>
   </div>
 
@@ -725,21 +814,60 @@ function formatCallDate(dateStr: string) {
 </template>
 
 <style scoped>
-.ao-embed-tabs {
+.ao-workspace {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: #fff;
+  color: #111827;
+  font-family: inherit;
+}
+
+.ao-workspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 14px 20px 10px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.ao-kicker {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #2563eb;
+}
+
+.ao-title {
+  margin: 2px 0 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ao-tabs {
   display: flex;
   flex-flow: row nowrap;
   align-items: stretch;
   flex-shrink: 0;
-  height: 44px;
+  height: 42px;
   overflow-x: auto;
   overflow-y: hidden;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e5e7eb;
   padding: 0 12px;
-  gap: 0;
   background: #fff;
 }
 
-.ao-embed-tabs button {
+.ao-tabs button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -749,7 +877,7 @@ function formatCallDate(dateStr: string) {
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;
-  color: #64748b;
+  color: #6b7280;
   font-size: 13px;
   font-weight: 500;
   line-height: 1;
@@ -758,12 +886,220 @@ function formatCallDate(dateStr: string) {
   cursor: pointer;
 }
 
-.ao-embed-tabs button:hover {
-  color: #1e293b;
+.ao-tabs button:hover {
+  color: #111827;
 }
 
-.ao-embed-tabs button.is-active {
-  color: #4338ca;
-  border-bottom-color: #4f46e5;
+.ao-tabs button.is-active {
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+}
+
+.ao-banner {
+  flex-shrink: 0;
+  padding: 8px 20px;
+  font-size: 13px;
+}
+
+.ao-banner-error {
+  background: #fef2f2;
+  color: #991b1b;
+  border-bottom: 1px solid #fecaca;
+}
+
+.ao-main {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: #f8fafc;
+}
+
+.ao-setup,
+.ao-overview,
+.ao-calls,
+.ao-panel {
+  padding: 20px;
+}
+
+.ao-setup-title,
+.ao-empty h2,
+.ao-ready h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.ao-setup-copy,
+.ao-empty p,
+.ao-ready p {
+  margin: 0 0 16px;
+  max-width: 560px;
+  color: #4b5563;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.ao-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ao-steps li {
+  position: relative;
+  padding: 8px 0 8px 28px;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.ao-steps li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid #d1d5db;
+  background: #fff;
+}
+
+.ao-steps li.current {
+  color: #111827;
+  font-weight: 600;
+}
+
+.ao-steps li.current::before {
+  border-color: #2563eb;
+  background: #2563eb;
+}
+
+.ao-steps li.done {
+  color: #047857;
+}
+
+.ao-steps li.done::before {
+  border-color: #059669;
+  background: #059669;
+}
+
+.ao-stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.ao-stat,
+.ao-empty,
+.ao-ready,
+.ao-call {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+}
+
+.ao-stat {
+  padding: 14px 16px;
+}
+
+.ao-stat-label,
+.ao-stat-meta {
+  margin: 0;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.ao-stat-value {
+  margin: 4px 0;
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.ao-empty,
+.ao-ready {
+  padding: 24px;
+}
+
+.ao-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ao-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 13px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.ao-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ao-btn-primary {
+  background: #2563eb;
+  color: #fff;
+}
+
+.ao-btn-primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.ao-btn-ghost {
+  background: #fff;
+  color: #374151;
+  border-color: #d1d5db;
+}
+
+.ao-btn-ghost:hover:not(:disabled) {
+  background: #f9fafb;
+}
+
+.ao-call-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ao-call {
+  padding: 14px 16px;
+}
+
+.ao-call-summary {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #111827;
+}
+
+.ao-call-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.ao-muted {
+  padding: 48px 16px;
+  text-align: center;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+@media (max-width: 720px) {
+  .ao-stat-row {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
