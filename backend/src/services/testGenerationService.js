@@ -472,13 +472,25 @@ export async function getTestCaseDetails(testCaseId) {
 /**
  * Archive/unarchive a test case
  */
+function asPersona(value) {
+  if (!value) return {};
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === 'object' ? value : {};
+}
+
 export async function updateTestCase(testCaseId, patch = {}) {
   const current = await getTestCaseDetails(testCaseId);
   const title = patch.title != null ? String(patch.title).trim() : current.title;
   const scenario = patch.scenario != null ? String(patch.scenario).trim() : current.scenario;
   const persona = patch.persona && typeof patch.persona === 'object'
-    ? { ...current.persona, ...patch.persona }
-    : current.persona;
+    ? { ...asPersona(current.persona), ...patch.persona }
+    : asPersona(current.persona);
 
   if (!title) throw new Error('Test case title is required');
   if (!scenario) throw new Error('Test case scenario is required');

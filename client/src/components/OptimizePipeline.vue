@@ -11,40 +11,47 @@ const props = withDefaults(defineProps<{
   agentName: 'Voice AI Agent',
 })
 
-type Phase = 'idle' | 'running' | 'review' | 'finishing' | 'done' | 'blocked' | 'error'
-type StepId = 'sync_agent' | 'sync_calls' | 'rubric' | 'evaluate' | 'patterns' | 'tests' | 'review' | 'run' | 'recs'
-type ModalKind = 'test' | 'pattern' | 'rec' | null
+type Phase = 'idle' | 'running' | 'select' | 'finishing' | 'done' | 'blocked' | 'error'
+type StepId = 'sync_agent' | 'sync_calls' | 'rubric' | 'evaluate' | 'patterns' | 'tests' | 'run' | 'recs'
+type ViewId = 'calls' | 'rubric' | 'evaluate' | 'patterns' | 'tests' | 'run' | 'recs'
+type ModalKind = ViewId | null
 
 interface StepDef {
   id: StepId
+  view?: ViewId
   label: string
   hint: string
 }
 
 const STEPS: StepDef[] = [
   { id: 'sync_agent', label: 'Sync', hint: 'Pull the latest agent configuration' },
-  { id: 'sync_calls', label: 'Calls', hint: 'Fetch recent conversations from HighLevel' },
-  { id: 'rubric', label: 'Rubric', hint: 'Create evaluation criteria from the prompt' },
-  { id: 'evaluate', label: 'Analyze', hint: 'Score each conversation' },
-  { id: 'patterns', label: 'Issues', hint: 'Detect repeating failure patterns' },
-  { id: 'tests', label: 'Tests', hint: 'Generate cases from those patterns' },
-  { id: 'review', label: 'Review', hint: 'Edit or skip a test, then continue' },
-  { id: 'run', label: 'Run', hint: 'Simulate the remaining cases' },
-  { id: 'recs', label: 'Recommend', hint: 'Turn findings into prompt and action changes' },
+  { id: 'sync_calls', view: 'calls', label: 'Calls', hint: 'Recent conversations from HighLevel' },
+  { id: 'rubric', view: 'rubric', label: 'Rubric', hint: 'Evaluation criteria from the prompt' },
+  { id: 'evaluate', view: 'evaluate', label: 'Analyze', hint: 'How each call scored' },
+  { id: 'patterns', view: 'patterns', label: 'Issues', hint: 'Repeating failure patterns' },
+  { id: 'tests', view: 'tests', label: 'Tests', hint: 'Choose which tests to run. Click a row to edit.' },
+  { id: 'run', view: 'run', label: 'Run', hint: 'Simulated test outcomes' },
+  { id: 'recs', view: 'recs', label: 'Recommend', hint: 'Suggested prompt and action changes' },
 ]
 
 const AUTO_STEPS: StepId[] = ['sync_agent', 'sync_calls', 'rubric', 'evaluate', 'patterns', 'tests']
 
 const phase = ref<Phase>('idle')
 const currentStep = ref<StepId | null>(null)
+const selectedView = ref<ViewId>('calls')
 const doneSteps = ref<StepId[]>([])
 const error = ref('')
 const toast = ref('')
 const saving = ref(false)
-const summary = ref({ calls: 0, patterns: 0, tests: 0, passed: 0, failed: 0, recommendations: 0 })
-const testCases = ref<any[]>([])
-const skippedIds = ref<string[]>([])
+const loadingFindings = ref(false)
+const findings = ref<any[]>([])
+
+const calls = ref<any[]>([])
+const rubric = ref<any>(null)
 const patterns = ref<any[]>([])
+const testCases = ref<any[]>([])
+const selectedIds = ref<string[]>([])
+const runResults = ref<any[]>([])
 const recommendations = ref<any[]>([])
 const version = ref<{ id: string, label: string, createdAt?: string } | null>(null)
 const lastOptimizedAt = ref<string | null>(null)
@@ -56,7 +63,10 @@ const draft = ref({ title: '', scenario: '', name: '', needs: '', style: '' })
 
 const progress = computed(() => Math.round((doneSteps.value.length / STEPS.length) * 100))
 const currentHint = computed(() => STEPS.find((item) => item.id === currentStep.value)?.hint || '')
-const activeTests = computed(() => testCases.value.filter((item) => !skippedIds.value.includes(item.id)))
+const selectedTests = computed(() => testCases.value.filter((item) => selectedIds.value.includes(item.id)))
+const allSelected = computed(() => testCases.value.length > 0 && selectedIds.value.length === testCases.value.length)
+const criteria = computed(() => rubric.value?.criteria || [])
+const canEditTests = computed(() => phase.value === 'select' || phase.value === 'idle' || phase.value === 'done')
 
 const versionLine = computed(() => {
   if (!version.value) return 'No synced version yet'
@@ -68,16 +78,44 @@ const versionLine = computed(() => {
   return `Version ${label} · not optimized yet`
 })
 
+const viewMeta = computed(() => {
+  const map: Record<ViewId, { title: string, empty: string, count: number }> = {
+    calls: { title: 'Calls', empty: 'No calls pulled yet.', count: calls.value.length },
+    rubric: { title: 'Rubric criteria', empty: 'No rubric yet.', count: criteria.value.length },
+    evaluate: { title: 'Call analysis', empty: 'Calls have not been analyzed yet.', count: calls.value.length },
+    patterns: { title: 'Issue patterns', empty: 'No issue patterns yet.', count: patterns.value.length },
+    tests: {
+      title: phase.value === 'select' ? 'Select tests to run' : 'Test cases',
+      empty: 'No test cases yet.',
+      count: testCases.value.length,
+    },
+    run: { title: 'Test results', empty: 'Tests have not been run yet.', count: runResults.value.length },
+    recs: { title: 'Recommendations', empty: 'No recommendations yet.', count: recommendations.value.length },
+  }
+  return map[selectedView.value]
+})
+
 function formatWhen(value: string) {
   try {
     return new Intl.DateTimeFormat('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
     }).format(new Date(value))
   } catch {
     return 'recently'
+  }
+}
+
+function formatKey(value = '') {
+  return String(value).replace(/_/g, ' ').replace(/([A-Z])/g, ' $1').trim()
+    .split(' ').map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ')
+}
+
+function formatDate(value?: string) {
+  if (!value) return '—'
+  try {
+    return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+  } catch {
+    return '—'
   }
 }
 
@@ -85,6 +123,24 @@ function stepState(id: StepId) {
   if (doneSteps.value.includes(id)) return 'done'
   if (currentStep.value === id) return 'current'
   return 'todo'
+}
+
+function canOpenStep(step: StepDef) {
+  if (!step.view) return false
+  if (doneSteps.value.includes(step.id)) return true
+  if (step.view === 'calls' && calls.value.length) return true
+  if (step.view === 'rubric' && criteria.value.length) return true
+  if (step.view === 'patterns' && patterns.value.length) return true
+  if (step.view === 'tests' && testCases.value.length) return true
+  if (step.view === 'recs' && recommendations.value.length) return true
+  if (step.view === 'run' && runResults.value.length) return true
+  if (step.view === 'evaluate' && calls.value.length && (phase.value === 'done' || doneSteps.value.includes('evaluate'))) return true
+  return false
+}
+
+function openStep(step: StepDef) {
+  if (!step.view || !canOpenStep(step)) return
+  selectedView.value = step.view
 }
 
 async function api(path: string, init?: RequestInit) {
@@ -99,26 +155,36 @@ async function api(path: string, init?: RequestInit) {
   return data
 }
 
+function applyStatus(data: any) {
+  version.value = data.version
+  alreadyOptimized.value = !!data.optimized
+  lastOptimizedAt.value = data.lastOptimizedAt || null
+  calls.value = data.calls || []
+  rubric.value = data.rubric || null
+  patterns.value = data.patterns || []
+  testCases.value = data.testCases || []
+  recommendations.value = data.recommendations || []
+  if (data.optimized) {
+    doneSteps.value = ['sync_agent', 'sync_calls', 'rubric', 'evaluate', 'patterns', 'tests', 'run', 'recs']
+    selectedView.value = recommendations.value.length ? 'recs' : (patterns.value.length ? 'patterns' : 'calls')
+  } else if (calls.value.length) {
+    selectedView.value = 'calls'
+  }
+}
+
 async function loadStatus() {
   if (!props.agentId) return
   try {
-    const data = await api(`/api/optimize/status/${props.agentId}`)
-    version.value = data.version
-    alreadyOptimized.value = !!data.optimized
-    lastOptimizedAt.value = data.lastOptimizedAt || null
-    if (phase.value === 'idle') {
-      patterns.value = data.patterns || []
-      recommendations.value = data.recommendations || []
-      summary.value.patterns = data.patternCount || patterns.value.length
-      summary.value.recommendations = data.recommendationCount || recommendations.value.length
-    }
+    applyStatus(await api(`/api/optimize/status/${props.agentId}`))
   } catch {
-    /* status is optional chrome */
+    /* optional chrome */
   }
 }
 
 async function runStep(step: StepId, extra: Record<string, unknown> = {}) {
   currentStep.value = step
+  const def = STEPS.find((item) => item.id === step)
+  if (def?.view) selectedView.value = def.view
   const data = await api('/api/optimize/step', {
     method: 'POST',
     body: JSON.stringify({
@@ -130,9 +196,7 @@ async function runStep(step: StepId, extra: Record<string, unknown> = {}) {
     }),
   })
   if (!doneSteps.value.includes(step)) doneSteps.value = [...doneSteps.value, step]
-  if (data.versionId && !version.value) {
-    version.value = { id: data.versionId, label: 'current' }
-  }
+  if (data.versionId && !version.value) version.value = { id: data.versionId, label: 'current' }
   return data
 }
 
@@ -147,39 +211,39 @@ async function startOptimize() {
   error.value = ''
   toast.value = ''
   doneSteps.value = []
-  skippedIds.value = []
-  recommendations.value = []
-  testCases.value = []
-  patterns.value = []
-  summary.value = { calls: 0, patterns: 0, tests: 0, passed: 0, failed: 0, recommendations: 0 }
+  selectedIds.value = []
+  runResults.value = []
   closeModal()
 
   try {
     for (const step of AUTO_STEPS) {
       const result = await runStep(step)
       if (step === 'sync_calls') {
-        summary.value.calls = result.count || 0
+        calls.value = result.calls || []
         if (result.blocked || !result.count) {
           phase.value = 'blocked'
           currentStep.value = null
+          selectedView.value = 'calls'
           return
         }
       }
-      if (step === 'rubric' && result.versionId) {
-        version.value = { id: result.versionId, label: version.value?.label || 'current' }
+      if (step === 'rubric') {
+        rubric.value = result.rubric || rubric.value
+        if (result.versionId) version.value = { id: result.versionId, label: version.value?.label || 'current' }
       }
-      if (step === 'patterns') {
-        summary.value.patterns = result.patternCount || 0
-        patterns.value = result.patterns || []
-      }
+      if (step === 'evaluate' && result.calls) calls.value = result.calls
+      if (step === 'patterns') patterns.value = result.patterns || []
       if (step === 'tests') {
         testCases.value = result.testCases || []
-        summary.value.tests = testCases.value.length
+        selectedIds.value = []
+        // Keep Tests as the current step until the user chooses what to run.
+        doneSteps.value = doneSteps.value.filter((id) => id !== 'tests')
       }
     }
-    currentStep.value = 'review'
-    phase.value = 'review'
-    toast.value = 'Review the tests. Click a card to edit it.'
+    currentStep.value = 'tests'
+    selectedView.value = 'tests'
+    phase.value = 'select'
+    toast.value = 'Select the tests to run. Click a row to edit one.'
   } catch (err: any) {
     phase.value = 'error'
     error.value = err.message || 'Optimize failed'
@@ -187,40 +251,67 @@ async function startOptimize() {
   }
 }
 
-function openTest(test: any) {
-  modalKind.value = 'test'
-  modalItem.value = test
-  draft.value = {
-    title: test.title || '',
-    scenario: test.scenario || '',
-    name: test.persona?.name || '',
-    needs: test.persona?.needs || '',
-    style: test.persona?.communication_style || test.persona?.communicationStyle || '',
+function personaOf(item: any) {
+  const raw = item?.persona
+  if (!raw) return {}
+  if (typeof raw === 'string') {
+    try { return JSON.parse(raw) } catch { return {} }
+  }
+  return raw
+}
+
+function openModal(kind: ViewId, item: any) {
+  modalKind.value = kind
+  modalItem.value = item
+  findings.value = []
+  if (kind === 'tests') {
+    const persona = personaOf(item)
+    draft.value = {
+      title: item.title || '',
+      scenario: item.scenario || '',
+      name: persona.name || '',
+      needs: persona.needs || '',
+      style: persona.communication_style || persona.communicationStyle || '',
+    }
+  }
+  if (kind === 'calls' || kind === 'evaluate') {
+    loadFindings(item.id)
   }
 }
 
-function openPattern(pattern: any) {
-  modalKind.value = 'pattern'
-  modalItem.value = pattern
-}
-
-function openRec(rec: any) {
-  modalKind.value = 'rec'
-  modalItem.value = rec
+async function loadFindings(callId: string) {
+  if (!callId) return
+  loadingFindings.value = true
+  try {
+    const data = await fetch(`/api/analysis/findings/${callId}`).then((res) => res.json()).catch(() => ({}))
+    findings.value = data.findings || []
+  } finally {
+    loadingFindings.value = false
+  }
 }
 
 function closeModal() {
   modalKind.value = null
   modalItem.value = null
+  findings.value = []
 }
 
-function skipTest(id: string) {
-  if (!skippedIds.value.includes(id)) skippedIds.value = [...skippedIds.value, id]
-  if (modalItem.value?.id === id) closeModal()
+function isSelected(id: string) {
+  return selectedIds.value.includes(id)
 }
 
-function keepTest(id: string) {
-  skippedIds.value = skippedIds.value.filter((item) => item !== id)
+function toggleSelect(id: string) {
+  selectedIds.value = isSelected(id)
+    ? selectedIds.value.filter((item) => item !== id)
+    : [...selectedIds.value, id]
+}
+
+function selectAll() {
+  selectedIds.value = testCases.value.map((item) => item.id)
+}
+
+function selectNone() {
+  selectedIds.value = []
 }
 
 async function saveTest() {
@@ -234,7 +325,7 @@ async function saveTest() {
         title: draft.value.title,
         scenario: draft.value.scenario,
         persona: {
-          ...(modalItem.value.persona || {}),
+          ...personaOf(modalItem.value),
           name: draft.value.name,
           needs: draft.value.needs,
           communication_style: draft.value.style,
@@ -250,7 +341,7 @@ async function saveTest() {
             title: draft.value.title,
             scenario: draft.value.scenario,
             persona: {
-              ...(item.persona || {}),
+              ...personaOf(item),
               name: draft.value.name,
               needs: draft.value.needs,
               communication_style: draft.value.style,
@@ -258,7 +349,7 @@ async function saveTest() {
           }
         : item
     ))
-    toast.value = 'Test case updated'
+    toast.value = 'Test case saved'
     closeModal()
   } catch (err: any) {
     error.value = err.message || 'Could not save test case'
@@ -268,8 +359,8 @@ async function saveTest() {
 }
 
 async function continueAfterReview() {
-  if (!activeTests.value.length) {
-    error.value = 'Keep at least one test case to continue.'
+  if (!selectedTests.value.length) {
+    error.value = 'Select at least one test to run.'
     return
   }
 
@@ -277,35 +368,24 @@ async function continueAfterReview() {
   error.value = ''
   toast.value = ''
   closeModal()
-  if (!doneSteps.value.includes('review')) doneSteps.value = [...doneSteps.value, 'review']
+  if (!doneSteps.value.includes('tests')) doneSteps.value = [...doneSteps.value, 'tests']
 
   try {
-    for (const skipped of skippedIds.value) {
-      await fetch(`/api/tests/${skipped}/archive`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ archived: true }),
-      }).catch(() => null)
-    }
-
     const runResult = await runStep('run', {
-      testCaseIds: activeTests.value.map((item) => item.id),
+      testCaseIds: selectedTests.value.map((item) => item.id),
     })
-    summary.value.passed = runResult.totalPassed || 0
-    summary.value.failed = runResult.totalFailed || 0
+    runResults.value = runResult.results || []
 
     const recResult = await runStep('recs')
     recommendations.value = recResult.recommendations || []
-    summary.value.recommendations = recResult.accepted || recommendations.value.length
     alreadyOptimized.value = true
     lastOptimizedAt.value = new Date().toISOString()
-    if (recResult.versionId) {
-      version.value = { id: recResult.versionId, label: version.value?.label || 'current' }
-    }
+    if (recResult.versionId) version.value = { id: recResult.versionId, label: version.value?.label || 'current' }
 
     currentStep.value = null
+    selectedView.value = 'recs'
     phase.value = 'done'
-    toast.value = 'Optimization finished.'
+    toast.value = 'Optimization finished. Click a row to inspect it.'
     await loadStatus()
   } catch (err: any) {
     phase.value = 'error'
@@ -315,15 +395,11 @@ async function continueAfterReview() {
 }
 
 function recTitle(rec: any) {
-  return String(rec.recType || rec.rec_type || 'Recommendation').replace(/_/g, ' ')
+  return formatKey(rec.recType || rec.rec_type || 'Recommendation')
 }
 
 function recBody(rec: any) {
   return rec.rationale || rec.payload?.summary || 'Suggested change for this agent.'
-}
-
-function patternTitle(pattern: any) {
-  return pattern.title || 'Issue pattern'
 }
 
 onMounted(loadStatus)
@@ -331,7 +407,7 @@ onMounted(loadStatus)
 
 <template>
   <div class="pipe">
-    <header class="pipe-top">
+    <header class="head">
       <div class="min">
         <p class="kicker">Optimize</p>
         <h1>{{ agentName }}</h1>
@@ -348,92 +424,146 @@ onMounted(loadStatus)
       </button>
     </header>
 
-    <div v-if="toast" class="toast">{{ toast }}</div>
-    <div v-if="error" class="banner">{{ error }}</div>
+    <p v-if="toast" class="toast">{{ toast }}</p>
+    <p v-if="error" class="banner">{{ error }}</p>
 
-    <div class="track">
-      <div class="bar"><span :style="{ width: `${progress}%` }" /></div>
-      <p class="status">
-        <template v-if="phase === 'idle' && alreadyOptimized">This version already has results. Open a card to inspect, or run again.</template>
-        <template v-else-if="phase === 'idle'">We pull calls, analyze issues, pause so you can edit tests, then recommend changes.</template>
-        <template v-else-if="phase === 'running' || phase === 'finishing'">{{ currentHint || 'Working…' }}</template>
-        <template v-else-if="phase === 'review'">Click a test to edit it. Skip only what you do not want to run.</template>
-        <template v-else-if="phase === 'blocked'">No calls in HighLevel yet. Place a test or live call, then run again.</template>
-        <template v-else-if="phase === 'done'">Done. Open a card for details.</template>
-        <template v-else>Stopped. Fix the issue above, then run again.</template>
+    <div class="progress">
+      <div class="bar"><span :style="{ width: `${phase === 'idle' && alreadyOptimized ? 100 : progress}%` }" /></div>
+      <p class="hint">
+        <template v-if="phase === 'idle' && alreadyOptimized">Click a step or a row to inspect the last run.</template>
+        <template v-else-if="phase === 'idle'">Start the run. Each finished step unlocks its rows below.</template>
+        <template v-else-if="phase === 'running' || phase === 'finishing'">{{ currentHint }}</template>
+        <template v-else-if="phase === 'select'">Check the tests you want to run. Click a row to edit it first.</template>
+        <template v-else-if="phase === 'blocked'">No calls in HighLevel yet.</template>
+        <template v-else-if="phase === 'done'">Click any step to see what it produced.</template>
+        <template v-else>Fix the error, then run again.</template>
       </p>
     </div>
 
-    <ol class="steps">
-      <li v-for="step in STEPS" :key="step.id" :class="stepState(step.id)">
-        <span class="dot" />
-        <span>{{ step.label }}</span>
+    <ol class="stepper">
+      <li
+        v-for="(step, index) in STEPS"
+        :key="step.id"
+        :class="[stepState(step.id), { openable: canOpenStep(step), selected: step.view === selectedView && canOpenStep(step) }]"
+      >
+        <button type="button" :disabled="!canOpenStep(step)" @click="openStep(step)">
+          <span class="num">{{ doneSteps.includes(step.id) ? '✓' : index + 1 }}</span>
+          <span class="lbl">{{ step.label }}</span>
+        </button>
       </li>
     </ol>
 
-    <section v-if="phase === 'review'" class="stage">
-      <div class="stage-head">
-        <h2>{{ activeTests.length }} tests will run</h2>
-        <div class="actions">
-          <button type="button" class="btn primary" @click="continueAfterReview">Continue</button>
+    <section class="pane">
+      <div class="pane-head">
+        <div>
+          <h2>{{ viewMeta.title }}</h2>
+          <p v-if="selectedView === 'tests' && phase === 'select'">
+            {{ selectedIds.length }} of {{ viewMeta.count }} selected · check a box to include it
+          </p>
+          <p v-else>{{ viewMeta.count }} item{{ viewMeta.count === 1 ? '' : 's' }} · click a row for details</p>
+        </div>
+        <div v-if="selectedView === 'tests' && phase === 'select'" class="head-actions">
+          <button type="button" class="btn ghost" @click="allSelected ? selectNone() : selectAll()">
+            {{ allSelected ? 'Clear all' : 'Select all' }}
+          </button>
+          <button type="button" class="btn primary" :disabled="!selectedIds.length" @click="continueAfterReview">
+            Run {{ selectedIds.length || 0 }} selected
+          </button>
         </div>
       </div>
-      <div class="grid">
-        <button
-          v-for="test in testCases"
-          :key="test.id"
-          type="button"
-          class="tile"
-          :class="{ skipped: skippedIds.includes(test.id) }"
-          @click="openTest(test)"
-        >
-          <span class="chip">{{ test.kind === 'edge_case' ? 'Edge' : 'Happy' }}</span>
-          <strong>{{ test.title || 'Untitled test' }}</strong>
-          <em>{{ skippedIds.includes(test.id) ? 'Skipped' : 'Click to edit' }}</em>
-        </button>
-      </div>
-    </section>
 
-    <section v-else-if="phase === 'idle' || phase === 'done'" class="stage">
-      <div v-if="patterns.length || recommendations.length" class="boards">
-        <div>
-          <h2>Issues</h2>
-          <div v-if="patterns.length" class="grid">
-            <button v-for="pattern in patterns" :key="pattern.id" type="button" class="tile" @click="openPattern(pattern)">
-              <span class="chip">Issue</span>
-              <strong>{{ patternTitle(pattern) }}</strong>
-              <em>{{ pattern.fail_count || pattern.failCount || 0 }} failing calls</em>
+      <div class="rows">
+        <template v-if="selectedView === 'calls' || selectedView === 'evaluate'">
+          <button v-for="call in calls" :key="call.id" type="button" class="row" @click="openModal(selectedView, call)">
+            <div class="main">
+              <strong>{{ call.summary || 'No summary' }}</strong>
+              <span>{{ formatDate(call.created_at_ghl) }} · {{ call.duration_s || 0 }}s</span>
+            </div>
+            <span class="badge" :class="call.kind">{{ call.kind || 'call' }}</span>
+          </button>
+        </template>
+
+        <template v-else-if="selectedView === 'rubric'">
+          <button v-for="item in criteria" :key="item.id" type="button" class="row" @click="openModal('rubric', item)">
+            <div class="main">
+              <strong>{{ formatKey(item.key) }}</strong>
+              <span>{{ item.category }} · {{ item.checkType || item.check_type }}</span>
+            </div>
+            <span class="badge" :class="`sev-${item.severity}`">
+              {{ item.severity === 3 ? 'Critical' : item.severity === 2 ? 'Important' : 'Polish' }}
+            </span>
+          </button>
+        </template>
+
+        <template v-else-if="selectedView === 'patterns'">
+          <button v-for="pattern in patterns" :key="pattern.id" type="button" class="row" @click="openModal('patterns', pattern)">
+            <div class="main">
+              <strong>{{ formatKey(pattern.title) }}</strong>
+              <span>{{ pattern.fail_count || pattern.failCount || 0 }} failing calls</span>
+            </div>
+            <span class="badge">{{ Number(pattern.impact_score || pattern.impactScore || 0).toFixed(1) }} impact</span>
+          </button>
+        </template>
+
+        <template v-else-if="selectedView === 'tests'">
+          <div
+            v-for="test in testCases"
+            :key="test.id"
+            class="row"
+            :class="{ picked: isSelected(test.id) }"
+          >
+            <label v-if="phase === 'select'" class="check" @click.stop>
+              <input type="checkbox" :checked="isSelected(test.id)" @change="toggleSelect(test.id)" />
+            </label>
+            <button type="button" class="row-hit" @click="openModal('tests', test)">
+              <div class="main">
+                <strong>{{ test.title || 'Untitled test' }}</strong>
+                <span>{{ test.kind === 'edge_case' ? 'Edge case' : 'Happy path' }}</span>
+              </div>
+              <span class="badge">{{ canEditTests ? 'Edit' : 'View' }}</span>
             </button>
           </div>
-          <p v-else class="empty">No issue cards yet.</p>
-        </div>
-        <div>
-          <h2>Recommendations</h2>
-          <div v-if="recommendations.length" class="grid">
-            <button v-for="rec in recommendations" :key="rec.id" type="button" class="tile" @click="openRec(rec)">
-              <span class="chip">Change</span>
+        </template>
+
+        <template v-else-if="selectedView === 'run'">
+          <button v-for="result in runResults" :key="result.id || result.test_case_id" type="button" class="row" @click="openModal('run', result)">
+            <div class="main">
+              <strong>{{ result.test_case_title || result.title || 'Test result' }}</strong>
+              <span>Attempt {{ result.attempt || 1 }}</span>
+            </div>
+            <span class="badge" :class="result.passed ? 'pass' : 'fail'">{{ result.passed ? 'Passed' : 'Failed' }}</span>
+          </button>
+        </template>
+
+        <template v-else>
+          <button v-for="rec in recommendations" :key="rec.id" type="button" class="row" @click="openModal('recs', rec)">
+            <div class="main">
               <strong>{{ recTitle(rec) }}</strong>
-              <em>{{ rec.tier || rec.status || 'proposed' }}</em>
-            </button>
-          </div>
-          <p v-else class="empty">No recommendations yet.</p>
-        </div>
+              <span class="clamp">{{ recBody(rec) }}</span>
+            </div>
+            <span class="badge">{{ rec.tier || rec.status || 'proposed' }}</span>
+          </button>
+        </template>
+
+        <p v-if="!viewMeta.count" class="empty">{{ viewMeta.empty }}</p>
       </div>
-      <p v-else-if="phase === 'done'" class="empty">No new recommendations this run.</p>
     </section>
 
     <div v-if="modalKind" class="overlay" @click.self="closeModal">
       <div class="modal" role="dialog" aria-modal="true">
         <header>
           <h3>
-            <template v-if="modalKind === 'test'">Edit test</template>
-            <template v-else-if="modalKind === 'pattern'">Issue</template>
+            <template v-if="modalKind === 'tests'">{{ canEditTests ? 'Edit test case' : 'Test case' }}</template>
+            <template v-else-if="modalKind === 'calls' || modalKind === 'evaluate'">Call</template>
+            <template v-else-if="modalKind === 'rubric'">Criterion</template>
+            <template v-else-if="modalKind === 'patterns'">Issue pattern</template>
+            <template v-else-if="modalKind === 'run'">Test result</template>
             <template v-else>Recommendation</template>
           </h3>
           <button type="button" class="icon" @click="closeModal">×</button>
         </header>
 
-        <div v-if="modalKind === 'test'" class="form">
+        <div v-if="modalKind === 'tests'" class="form">
           <label>Title<input v-model="draft.title" type="text" /></label>
           <label>Scenario<textarea v-model="draft.scenario" rows="4" /></label>
           <div class="split">
@@ -442,34 +572,61 @@ onMounted(loadStatus)
           </div>
           <label>Need<input v-model="draft.needs" type="text" /></label>
           <div class="actions">
-            <button type="button" class="btn primary" :disabled="saving" @click="saveTest">
+            <button type="button" class="btn primary" :disabled="saving || !draft.title.trim() || !draft.scenario.trim()" @click="saveTest">
               {{ saving ? 'Saving…' : 'Save changes' }}
             </button>
             <button
+              v-if="phase === 'select'"
               type="button"
               class="btn ghost"
-              @click="skippedIds.includes(modalItem.id) ? keepTest(modalItem.id) : skipTest(modalItem.id)"
+              @click="toggleSelect(modalItem.id)"
             >
-              {{ skippedIds.includes(modalItem.id) ? 'Keep this test' : 'Skip this test' }}
+              {{ isSelected(modalItem.id) ? 'Unselect' : 'Select for run' }}
             </button>
           </div>
         </div>
 
-        <div v-else-if="modalKind === 'pattern'" class="detail">
-          <p class="lead">{{ patternTitle(modalItem) }}</p>
-          <p>{{ modalItem.description || 'No description provided.' }}</p>
+        <div v-else-if="modalKind === 'calls' || modalKind === 'evaluate'" class="detail">
+          <p class="lead">{{ modalItem.summary || 'No summary' }}</p>
+          <p class="meta">{{ modalItem.kind }} · {{ formatDate(modalItem.created_at_ghl) }} · {{ modalItem.duration_s || 0 }}s</p>
+          <p v-if="modalItem.raw_transcript" class="body">{{ modalItem.raw_transcript }}</p>
+          <div v-if="loadingFindings" class="meta">Loading findings…</div>
+          <ul v-else-if="findings.length" class="findings">
+            <li v-for="finding in findings" :key="finding.id">
+              <strong>{{ formatKey(finding.criterion_key) }}</strong>
+              <span :class="finding.status">{{ finding.status }}</span>
+              <p>{{ finding.rationale }}</p>
+            </li>
+          </ul>
+        </div>
+
+        <div v-else-if="modalKind === 'rubric'" class="detail">
+          <p class="lead">{{ formatKey(modalItem.key) }}</p>
+          <p>{{ modalItem.description }}</p>
+          <p class="meta">{{ modalItem.category }} · severity {{ modalItem.severity }} · {{ modalItem.checkType || modalItem.check_type }}</p>
+        </div>
+
+        <div v-else-if="modalKind === 'patterns'" class="detail">
+          <p class="lead">{{ formatKey(modalItem.title) }}</p>
+          <p>{{ modalItem.description || 'No description.' }}</p>
           <p class="meta">
             Failed on {{ modalItem.fail_count || modalItem.failCount || 0 }} of
             {{ modalItem.call_count || modalItem.callCount || 0 }} calls
+            · impact {{ Number(modalItem.impact_score || modalItem.impactScore || 0).toFixed(2) }}
           </p>
+        </div>
+
+        <div v-else-if="modalKind === 'run'" class="detail">
+          <p class="lead">{{ modalItem.test_case_title || 'Test result' }}</p>
+          <p class="meta">{{ modalItem.passed ? 'Passed' : 'Failed' }} · attempt {{ modalItem.attempt || 1 }}</p>
+          <pre v-if="modalItem.criterion_outcomes">{{ typeof modalItem.criterion_outcomes === 'string' ? modalItem.criterion_outcomes : JSON.stringify(modalItem.criterion_outcomes, null, 2) }}</pre>
         </div>
 
         <div v-else class="detail">
           <p class="lead">{{ recTitle(modalItem) }}</p>
           <p>{{ recBody(modalItem) }}</p>
-          <p v-if="modalItem.payload?.diff || modalItem.payload?.changes" class="meta">
-            Open this card after applying changes in the HighLevel builder.
-          </p>
+          <p class="meta">{{ modalItem.tier }} · {{ modalItem.status || 'proposed' }}</p>
+          <pre v-if="modalItem.payload && !modalItem.payload.diff">{{ JSON.stringify(modalItem.payload, null, 2) }}</pre>
         </div>
       </div>
     </div>
@@ -482,158 +639,167 @@ onMounted(loadStatus)
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 18px 20px;
-  background: #fff;
-  color: #111827;
+  background: #f8fafc;
+  color: #0f172a;
 }
 
-.pipe-top {
+.head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  padding: 16px 20px 12px;
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
 }
 
 .min { min-width: 0; }
-
-.kicker {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #2563eb;
-}
-
-h1 {
-  margin: 2px 0 4px;
-  font-size: 20px;
-}
-
-.version {
-  margin: 0;
-  color: #6b7280;
-  font-size: 12px;
-}
-
+.kicker { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #2563eb; }
+h1 { margin: 2px 0 4px; font-size: 20px; }
+.version { margin: 0; color: #64748b; font-size: 12px; }
 .version.ready { color: #047857; }
 
-.track { margin: 14px 0 10px; }
+.progress { padding: 10px 20px 0; background: #fff; }
+.bar { height: 4px; border-radius: 99px; background: #e2e8f0; overflow: hidden; }
+.bar span { display: block; height: 100%; background: #2563eb; transition: width .25s ease; }
+.hint { margin: 8px 0 0; color: #475569; font-size: 13px; }
 
-.bar {
-  height: 6px;
-  border-radius: 999px;
-  background: #e5e7eb;
-  overflow: hidden;
-}
-
-.bar span {
-  display: block;
-  height: 100%;
-  background: #2563eb;
-  transition: width 0.25s ease;
-}
-
-.status {
-  margin: 8px 0 0;
-  color: #4b5563;
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.steps {
+.stepper {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  margin: 0 0 14px;
-  padding: 0;
+  gap: 4px;
+  overflow-x: auto;
+  margin: 0;
+  padding: 10px 16px 12px;
   list-style: none;
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
 }
 
-.steps li {
+.stepper li button {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  color: #9ca3af;
-  font-size: 12px;
+  gap: 4px;
+  min-width: 64px;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  cursor: default;
 }
 
-.steps li.current { color: #111827; font-weight: 650; }
-.steps li.done { color: #047857; }
+.stepper li.openable button { cursor: pointer; color: #334155; }
+.stepper li.current button { color: #1d4ed8; }
+.stepper li.done button { color: #047857; }
+.stepper li.selected button { background: #eff6ff; border-radius: 8px; }
 
-.dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #d1d5db;
+.num {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 99px;
+  background: #e2e8f0;
+  font-size: 11px;
+  font-weight: 700;
 }
-.current .dot { background: #2563eb; }
-.done .dot { background: #059669; }
+.current .num { background: #2563eb; color: #fff; }
+.done .num { background: #d1fae5; color: #047857; }
+.lbl { font-size: 11px; font-weight: 600; }
 
-.stage {
+.pane {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  margin: 12px 16px 16px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
 }
 
-.stage-head, .actions {
+.pane-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e2e8f0;
 }
 
-h2 { margin: 0 0 10px; font-size: 15px; }
-
-.boards {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  min-height: 0;
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 8px;
-}
-
-.tile {
+.head-actions {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  min-height: 92px;
-  padding: 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
+  align-items: center;
+  gap: 8px;
+}
+
+.pane-head h2 { margin: 0; font-size: 15px; }
+.pane-head p { margin: 2px 0 0; color: #64748b; font-size: 12px; }
+
+.rows { flex: 1; min-height: 0; overflow: auto; }
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  border-bottom: 1px solid #f1f5f9;
   background: #fff;
   text-align: left;
   cursor: pointer;
 }
-
-.tile:hover { border-color: #93c5fd; }
-.tile.skipped { opacity: 0.45; }
-
-.tile strong {
-  font-size: 13px;
-  line-height: 1.3;
+.row:hover { background: #f8fafc; }
+.row.picked { background: #eff6ff; }
+.row-hit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.check {
+  display: grid;
+  place-items: center;
+  padding-right: 4px;
+}
+.check input {
+  width: 16px;
+  height: 16px;
 }
 
-.tile em {
-  font-style: normal;
-  color: #6b7280;
+.main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.main strong { font-size: 13px; line-height: 1.35; }
+.main span, .clamp { color: #64748b; font-size: 12px; }
+.clamp { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+
+.badge {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border-radius: 99px;
+  background: #f1f5f9;
+  color: #334155;
   font-size: 11px;
+  font-weight: 650;
+  text-transform: capitalize;
 }
+.badge.real, .badge.pass { background: #dcfce7; color: #166534; }
+.badge.simulated, .badge.fail { background: #fee2e2; color: #991b1b; }
+.badge.sev-3 { background: #fee2e2; color: #991b1b; }
+.badge.sev-2 { background: #fef3c7; color: #92400e; }
 
-.chip {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: #2563eb;
-}
+.empty { margin: 0; padding: 36px 16px; text-align: center; color: #64748b; font-size: 13px; }
+.toast, .banner { margin: 0; padding: 8px 20px; font-size: 13px; }
+.toast { background: #eff6ff; color: #1d4ed8; }
+.banner { background: #fef2f2; color: #991b1b; }
 
 .btn {
   height: 34px;
@@ -641,89 +807,56 @@ h2 { margin: 0 0 10px; font-size: 15px; }
   border-radius: 8px;
   border: 1px solid transparent;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 650;
   cursor: pointer;
 }
-
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
 .primary { background: #2563eb; color: #fff; }
-.ghost { background: #fff; color: #374151; border-color: #d1d5db; }
-
-.toast, .banner {
-  margin: 10px 0 0;
-  padding: 8px 10px;
-  border-radius: 8px;
-  font-size: 13px;
-}
-.toast { background: #eff6ff; color: #1d4ed8; }
-.banner { background: #fef2f2; color: #991b1b; }
-.empty { color: #6b7280; font-size: 13px; }
+.ghost { background: #fff; color: #334155; border-color: #cbd5e1; }
 
 .overlay {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 30;
   display: grid;
   place-items: center;
-  background: rgba(15, 23, 42, 0.35);
   padding: 20px;
+  background: rgba(15, 23, 42, .4);
 }
-
 .modal {
-  width: min(520px, 100%);
-  max-height: min(80vh, 640px);
+  width: min(640px, 100%);
+  max-height: min(82vh, 720px);
   overflow: auto;
   background: #fff;
   border-radius: 14px;
-  padding: 16px;
+  padding: 16px 18px 18px;
 }
-
-.modal header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
+.modal header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .modal h3 { margin: 0; font-size: 16px; }
-
-.icon {
-  width: 32px;
-  height: 32px;
-  border: 0;
-  background: transparent;
-  font-size: 22px;
-  cursor: pointer;
-}
+.icon { width: 32px; height: 32px; border: 0; background: transparent; font-size: 22px; cursor: pointer; }
 
 .form, .detail { display: flex; flex-direction: column; gap: 10px; }
-
-label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #374151;
-}
-
-input, textarea {
+label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 650; color: #334155; }
+input, textarea, pre {
   width: 100%;
-  border: 1px solid #d1d5db;
+  border: 1px solid #cbd5e1;
   border-radius: 8px;
   padding: 8px 10px;
   font: inherit;
   font-weight: 400;
-  color: #111827;
+  color: #0f172a;
 }
-
+pre { font-size: 12px; background: #f8fafc; overflow: auto; }
 .split { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.actions { display: flex; gap: 8px; }
+.lead { margin: 0; font-weight: 700; }
+.body, .detail p { margin: 0; color: #334155; font-size: 14px; line-height: 1.5; }
+.meta { color: #64748b !important; font-size: 12px !important; }
 
-.lead { margin: 0; font-weight: 650; }
-.detail p { margin: 0; color: #374151; font-size: 14px; line-height: 1.5; }
-.meta { color: #6b7280 !important; font-size: 12px !important; }
-
-@media (max-width: 720px) {
-  .boards { grid-template-columns: 1fr; }
-}
+.findings { margin: 0; padding: 0; list-style: none; }
+.findings li { padding: 8px 0; border-top: 1px solid #e2e8f0; }
+.findings strong { margin-right: 8px; }
+.findings .fail { color: #b91c1c; font-size: 12px; font-weight: 700; }
+.findings .pass { color: #15803d; font-size: 12px; font-weight: 700; }
+.findings p { margin: 4px 0 0; font-size: 13px; }
 </style>

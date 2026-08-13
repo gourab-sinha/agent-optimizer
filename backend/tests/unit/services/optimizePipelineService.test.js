@@ -31,7 +31,8 @@ vi.mock('../../../src/recommend/index.js', () => ({
 
 import db from '../../../src/db/connection.js';
 import { syncAgentCalls, getAgentCalls } from '../../../src/services/callSyncService.js';
-import { generateRubricForAgentVersion } from '../../../src/services/rubricEvaluationService.js';
+import { generateRubricForAgentVersion, getRubricByAgentVersion } from '../../../src/services/rubricEvaluationService.js';
+import { getTestCases } from '../../../src/services/testGenerationService.js';
 import { runTests } from '../../../src/services/testRunnerService.js';
 import { runOptimizeStep, getOptimizeStatus } from '../../../src/services/optimizePipelineService.js';
 
@@ -71,9 +72,14 @@ describe('optimizePipelineService', () => {
       criteriaCount: 4,
       cached: false,
     });
+    getRubricByAgentVersion.mockResolvedValueOnce({
+      id: 'rub-1',
+      criteria: [{ id: 'c1', key: 'greeting' }],
+    });
 
     const result = await runOptimizeStep({ agentId: 'a1', step: 'rubric' });
     expect(result.rubricId).toBe('rub-1');
+    expect(result.rubric.criteria).toHaveLength(1);
     expect(generateRubricForAgentVersion).toHaveBeenCalledWith('ver-1');
   });
 
@@ -83,11 +89,16 @@ describe('optimizePipelineService', () => {
       .mockResolvedValueOnce({ rows: [{ id: 'p1', title: 'Price cave', description: 'Gives in', fail_count: 3, call_count: 5, impact_score: 1.2 }] })
       .mockResolvedValueOnce({ rows: [{ id: 'r1', rec_type: 'prompt_patch', tier: 'applicable', rationale: 'Tighten', payload: {}, status: 'proposed', created_at: '2026-08-14' }] })
       .mockResolvedValueOnce({ rows: [{ id: 'run-1', status: 'completed', trigger: 'manual', created_at: '2026-08-14' }] });
+    getAgentCalls.mockResolvedValueOnce([{ id: 'c1' }]);
+    getTestCases.mockResolvedValueOnce([{ id: 't1', title: 'Book' }]);
+    getRubricByAgentVersion.mockResolvedValueOnce({ id: 'rub-1', criteria: [] });
 
     const status = await getOptimizeStatus('a1');
     expect(status.optimized).toBe(true);
     expect(status.version.label).toBe('baseline');
     expect(status.recommendations).toHaveLength(1);
+    expect(status.calls).toHaveLength(1);
+    expect(status.testCases).toHaveLength(1);
   });
 
   it('returns stored calls when location is missing', async () => {

@@ -48,19 +48,22 @@ export async function getOptimizeStatus(agentId) {
       lastOptimizedAt: null,
       patternCount: 0,
       recommendationCount: 0,
+      calls: [],
+      rubric: null,
+      testCases: [],
       patterns: [],
       recommendations: [],
       lastRun: null,
     };
   }
 
-  const [patternsResult, recsResult, runResult] = await Promise.all([
+  const [patternsResult, recsResult, runResult, calls, testCases, rubric] = await Promise.all([
     db.query(
-      `SELECT id, title, description, fail_count, call_count, impact_score
+      `SELECT id, title, description, fail_count, call_count, impact_score, criterion_id
        FROM issue_patterns
        WHERE agent_version_id = $1 AND is_deleted = false
        ORDER BY impact_score DESC
-       LIMIT 8`,
+       LIMIT 20`,
       [version.id]
     ),
     db.query(
@@ -68,7 +71,7 @@ export async function getOptimizeStatus(agentId) {
        FROM recommendations
        WHERE agent_version_id = $1 AND is_deleted = false
        ORDER BY created_at DESC
-       LIMIT 8`,
+       LIMIT 20`,
       [version.id]
     ),
     db.query(
@@ -79,6 +82,9 @@ export async function getOptimizeStatus(agentId) {
        LIMIT 1`,
       [version.id]
     ),
+    getAgentCalls(agentId, { limit: 50 }),
+    getTestCases(agentId),
+    getRubricByAgentVersion(version.id),
   ]);
 
   const lastRun = runResult.rows[0] || null;
@@ -95,6 +101,9 @@ export async function getOptimizeStatus(agentId) {
     lastOptimizedAt,
     patternCount: patternsResult.rows.length,
     recommendationCount: recsResult.rows.length,
+    calls,
+    rubric,
+    testCases,
     patterns: patternsResult.rows,
     recommendations: recsResult.rows.map((row) => ({
       id: row.id,
@@ -184,7 +193,15 @@ export async function runOptimizeStep({
       throw Object.assign(new Error('Agent is not synced yet. Sync the agent first.'), { status: 404 });
     }
     const result = await generateRubricForAgentVersion(versionId);
-    return { step, versionId, rubricId: result.rubricId, criteriaCount: result.criteriaCount, cached: !!result.cached };
+    const rubric = await getRubricByAgentVersion(versionId);
+    return {
+      step,
+      versionId,
+      rubricId: result.rubricId,
+      criteriaCount: result.criteriaCount,
+      cached: !!result.cached,
+      rubric,
+    };
   }
 
   if (step === 'evaluate') {
@@ -209,7 +226,7 @@ export async function runOptimizeStep({
         results.push({ callId: call.id, success: false, error: error.message });
       }
     }
-    return { step, rubricId: rubric.id, evaluated: results.length, results };
+    return { step, rubricId: rubric.id, evaluated: results.length, results, calls };
   }
 
   if (step === 'patterns') {
