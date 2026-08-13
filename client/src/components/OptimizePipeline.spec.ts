@@ -76,7 +76,7 @@ function mockFetch(options: {
       const finished = generatedRecs.length > 0
       return jsonResponse({
         success: true,
-        version: { id: 'ver-1', label: 'baseline' },
+        version: { id: 'ver-1', label: 'baseline', number: 1 },
         lastOptimizedAt: finished ? '2026-08-14T12:00:00.000Z' : null,
         calls: [],
         rubric: null,
@@ -158,7 +158,7 @@ describe('OptimizePipeline flow', () => {
       status: {
         optimized: true,
         lastOptimizedAt: '2026-08-14T12:00:00.000Z',
-        version: { id: 'ver-1', label: 'baseline' },
+        version: { id: 'ver-1', label: 'baseline', number: 1 },
         recommendations: [{ id: 'rec-1', recType: 'prompt_patch', rationale: 'Tighten the pricing reply' }],
         lastRunResults: [{ id: 'res-1', passed: true }],
         lastRunMetrics: { total: 2, passed: 1, failed: 1, passRate: 50 },
@@ -166,7 +166,7 @@ describe('OptimizePipeline flow', () => {
     }))
     await pipeline.loadStatus()
     expect(pipeline.alreadyOptimized.value).toBe(true)
-    expect(pipeline.versionLine.value).toMatch(/Version baseline · optimized/)
+    expect(pipeline.versionLine.value).toBe('Version 1')
     expect(pipeline.progressPercent.value).toBe(100)
     expect(pipeline.progressLabel.value).toBe('100% · run complete')
     expect(pipeline.selectedView.value).toBe('recs')
@@ -188,7 +188,7 @@ describe('OptimizePipeline flow', () => {
     expect(pipeline.selectedView.value).toBe('tests')
     expect(pipeline.selectedIds.value).toEqual([])
     expect(pipeline.testCases.value).toHaveLength(2)
-    expect(pipeline.toast.value).toMatch(/Select the tests/)
+    expect(pipeline.phase.value).toBe('select')
     expect(pipeline.progressLabel.value).toMatch(/choose tests to continue/)
     expect(pipeline.doneSteps.value).not.toContain('tests')
     expect(pipeline.currentStep.value).toBe('tests')

@@ -32,7 +32,14 @@ export async function getOptimizeStatus(agentId) {
   }
 
   const versionResult = await db.query(
-    `SELECT id, label, source, created_at
+    `SELECT id, label, source, created_at,
+            (
+              SELECT COUNT(*)::int
+              FROM agent_versions older
+              WHERE older.agent_id = agent_versions.agent_id
+                AND older.is_deleted = false
+                AND older.created_at <= agent_versions.created_at
+            ) AS version_number
      FROM agent_versions
      WHERE agent_id = $1 AND is_deleted = false
      ORDER BY created_at DESC
@@ -108,6 +115,7 @@ export async function getOptimizeStatus(agentId) {
     version: {
       id: version.id,
       label: version.label,
+      number: version.version_number || 1,
       source: version.source,
       createdAt: version.created_at,
     },

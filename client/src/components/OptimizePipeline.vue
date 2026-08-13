@@ -63,36 +63,34 @@ onMounted(loadStatus)
 
 <template>
   <div class="pipe">
-    <header class="head">
-      <div class="min">
-        <p class="kicker">Optimize</p>
-        <h1>{{ agentName }}</h1>
-        <p class="version" :class="{ ready: alreadyOptimized }">{{ versionLine }}</p>
+    <header class="toolbar">
+      <div class="head">
+        <div class="min">
+          <p v-if="versionLine" class="version">{{ versionLine }}</p>
+        </div>
+        <button
+          v-if="phase === 'idle' || phase === 'done' || phase === 'blocked' || phase === 'error'"
+          type="button"
+          class="btn primary"
+          data-testid="optimize-start"
+          :disabled="!agentId || !locationId"
+          @click="startOptimize"
+        >
+          {{ alreadyOptimized || phase === 'done' ? 'Run again' : 'Optimize this agent' }}
+        </button>
       </div>
-      <button
-        v-if="phase === 'idle' || phase === 'done' || phase === 'blocked' || phase === 'error'"
-        type="button"
-        class="btn primary"
-        data-testid="optimize-start"
-        :disabled="!agentId || !locationId"
-        @click="startOptimize"
-      >
-        {{ alreadyOptimized || phase === 'done' ? 'Run again' : 'Optimize this agent' }}
-      </button>
+      <div class="progress" aria-label="Optimize progress" data-testid="optimize-progress">
+        <div class="progress-top">
+          <span>{{ progressLabel }}</span>
+          <strong>{{ progressPercent }}%</strong>
+        </div>
+        <div class="progress-track">
+          <span :style="{ width: `${progressPercent}%` }" />
+        </div>
+      </div>
+      <p v-if="error" class="banner">{{ error }}</p>
+      <p v-else-if="toast" class="toast">{{ toast }}</p>
     </header>
-
-    <div class="progress" aria-label="Optimize progress" data-testid="optimize-progress">
-      <div class="progress-top">
-        <span>{{ progressLabel }}</span>
-        <strong>{{ progressPercent }}%</strong>
-      </div>
-      <div class="progress-track">
-        <span :style="{ width: `${progressPercent}%` }" />
-      </div>
-    </div>
-
-    <p v-if="toast" class="toast">{{ toast }}</p>
-    <p v-if="error" class="banner">{{ error }}</p>
 
     <div class="workspace">
       <nav class="nav" aria-label="Optimize sections">
@@ -116,7 +114,8 @@ onMounted(loadStatus)
         <div class="content-head">
           <div>
             <h2>{{ navItems.find((item) => item.view === selectedView)?.label }}</h2>
-            <p>{{ currentHint || stepSummary(navItems.find((item) => item.view === selectedView) || STEPS[1]) }}</p>
+            <p v-if="selectedView === 'tests' && phase === 'select'">Check the tests to run. Open a row to edit it.</p>
+            <p v-else>{{ currentHint || stepSummary(navItems.find((item) => item.view === selectedView) || STEPS[1]) }}</p>
           </div>
           <div v-if="selectedView === 'tests' && phase === 'select'" class="head-actions">
             <button type="button" class="btn ghost" @click="allSelected ? selectNone() : selectAll()">
@@ -327,14 +326,20 @@ onMounted(loadStatus)
   color: #111827;
 }
 
+.toolbar {
+  margin: 12px 16px 0;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
 .head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 16px;
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
+  padding: 12px 16px;
 }
 
 .min { min-width: 0; }
@@ -344,9 +349,7 @@ h1 { margin: 2px 0 4px; font-size: 20px; }
 .version.ready { color: #047857; }
 
 .progress {
-  padding: 10px 16px 12px;
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
+  padding: 0 16px 12px;
 }
 
 .progress-top {
@@ -582,9 +585,9 @@ h1 { margin: 2px 0 4px; font-size: 20px; }
 .badge.sev-2 { background: #fef3c7; color: #92400e; }
 
 .empty { margin: 0; padding: 36px 16px; text-align: center; color: #64748b; font-size: 13px; }
-.toast, .banner { margin: 0; padding: 8px 20px; font-size: 13px; }
-.toast { background: #eff6ff; color: #1d4ed8; }
-.banner { background: #fef2f2; color: #991b1b; }
+.toast, .banner { margin: 0; padding: 8px 16px 12px; font-size: 13px; }
+.toast { color: #1d4ed8; }
+.banner { color: #991b1b; }
 
 .btn {
   height: 34px;

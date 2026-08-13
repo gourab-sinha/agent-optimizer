@@ -93,7 +93,7 @@ export function useOptimizePipeline(props: OptimizePipelineProps, fetchImpl: typ
   const runMetrics = ref({ total: 0, passed: 0, failed: 0, passRate: 0, status: '', startedAt: '', finishedAt: '' })
   const recommendations = ref<any[]>([])
   const navItems = computed(() => STEPS.filter((step) => step.view))
-  const version = ref<{ id: string, label: string, createdAt?: string } | null>(null)
+  const version = ref<{ id: string, label: string, number?: number, createdAt?: string } | null>(null)
   const lastOptimizedAt = ref<string | null>(null)
   const alreadyOptimized = ref(false)
   const modalKind = ref<ModalKind>(null)
@@ -126,13 +126,9 @@ export function useOptimizePipeline(props: OptimizePipelineProps, fetchImpl: typ
     return Boolean(step && currentStep.value === step.id && !doneSteps.value.includes(step.id))
   })
   const versionLine = computed(() => {
-    if (!version.value) return 'No synced version yet'
-    const label = version.value.label || 'current'
-    if (alreadyOptimized.value && lastOptimizedAt.value) {
-      return `Version ${label} · optimized ${formatWhen(lastOptimizedAt.value)}`
-    }
-    if (alreadyOptimized.value) return `Version ${label} · already optimized`
-    return `Version ${label} · not optimized yet`
+    const number = version.value?.number
+    if (!number) return ''
+    return `Version ${number}`
   })
 
   function stepCount(step: StepDef) {
@@ -345,7 +341,7 @@ export function useOptimizePipeline(props: OptimizePipelineProps, fetchImpl: typ
       currentStep.value = 'tests'
       selectedView.value = 'tests'
       phase.value = 'select'
-      toast.value = 'Select the tests to run. Click a row to edit one.'
+      toast.value = ''
     } catch (err: any) {
       phase.value = 'error'
       error.value = err.message || 'Optimize failed'
@@ -473,7 +469,7 @@ export function useOptimizePipeline(props: OptimizePipelineProps, fetchImpl: typ
       currentStep.value = null
       selectedView.value = 'recs'
       phase.value = 'done'
-      toast.value = 'Optimization finished. Click a row to inspect it.'
+      toast.value = ''
       await loadStatus()
     } catch (err: any) {
       phase.value = 'error'
