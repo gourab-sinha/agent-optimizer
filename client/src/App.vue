@@ -46,7 +46,10 @@ function onParentMessage(event: MessageEvent) {
     return
   }
   if (data.type === 'AO_CONTEXT' && data.agent) {
-    applyEmbedContext(data.agent)
+    applyEmbedContext({
+      ...data.agent,
+      companyId: data.companyId || data.agent.companyId,
+    })
   }
 }
 

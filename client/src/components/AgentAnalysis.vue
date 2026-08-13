@@ -5,12 +5,15 @@ interface Props {
   agentId: string
   agentName: string
   locationId: string
+  compact?: boolean
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  compact: false,
+})
 
 // Tabs
-const activeTab = ref<'calls' | 'analysis' | 'metrics'>('calls')
+const activeTab = ref<'calls' | 'analysis' | 'metrics'>(props.compact ? 'analysis' : 'calls')
 
 // Rubric state
 const rubric = ref<any>(null)
@@ -364,8 +367,8 @@ loadRubric()
 </script>
 
 <template>
-  <div class="agent-analysis">
-    <div class="analysis-header">
+  <div class="agent-analysis" :class="{ compact }">
+    <div v-if="!compact" class="analysis-header">
       <h3 style="margin: 0; font-size: 1.125rem;">{{ agentName }} - Analysis</h3>
     </div>
 
@@ -592,6 +595,10 @@ loadRubric()
 <style scoped>
 .agent-analysis {
   padding: 1rem;
+}
+
+.agent-analysis.compact {
+  padding: 0;
 }
 
 .analysis-header {

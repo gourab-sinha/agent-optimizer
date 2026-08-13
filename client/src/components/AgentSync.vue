@@ -20,11 +20,13 @@ const props = withDefaults(defineProps<{
 })
 
 const locationId = ref('')
+const companyId = ref(props.initialCompanyId || '')
 const agents = ref<any[]>([])
 const loading = ref(false)
 const syncing = ref(false)
 const error = ref('')
 const lastSync = ref<Date | null>(null)
+const analysisKey = ref(0)
 const expandedAgent = ref<string | null>(null)
 const agentCalls = ref<Record<string, any[]>>({})
 const loadingCalls = ref<Record<string, boolean>>({})
@@ -66,7 +68,7 @@ function applyEmbedSelection() {
 }
 
 function getAgentTab(agentId: string) {
-  return agentTabs.value[agentId] || 'calls'
+  return agentTabs.value[agentId] || (props.embed ? 'analysis' : 'calls')
 }
 
 function setAgentTab(agentId: string, tab: 'calls' | 'analysis' | 'metrics' | 'tests' | 'recommendations') {
@@ -123,18 +125,10 @@ onMounted(async () => {
 
     if (devLocationId) {
       locationId.value = devLocationId
+      companyId.value = props.initialCompanyId || urlParams.get('companyId') || companyId.value
       applyEmbedSelection()
       if (props.embed) {
-        const companyId = props.initialCompanyId || urlParams.get('companyId') || ''
-        const agentId = props.initialAgentId || urlParams.get('agentId') || ''
-        const qs = new URLSearchParams({ locationId: devLocationId })
-        if (companyId) qs.set('companyId', companyId)
-        if (agentId) qs.set('agentId', agentId)
-        try {
-          await fetch(`/api/embed/resolve?${qs.toString()}`)
-        } catch {
-          /* resolve is best-effort; sync below still mints */
-        }
+        await resolveEmbedContext()
       }
       await loadAgents()
       const missing = props.embed && props.initialAgentId
@@ -155,9 +149,12 @@ onMounted(async () => {
 })
 
 watch(
-  () => [props.initialAgentId, props.initialLocationId, props.initialAgentName],
-  async ([agentId, nextLocationId]) => {
+  () => [props.initialAgentId, props.initialLocationId, props.initialAgentName, props.initialCompanyId],
+  async ([agentId, nextLocationId, _name, nextCompanyId]) => {
     if (!props.embed) return
+    if (nextCompanyId && nextCompanyId !== companyId.value) {
+      companyId.value = String(nextCompanyId)
+    }
     if (nextLocationId && nextLocationId !== locationId.value) {
       locationId.value = nextLocationId
       await loadAgents()
@@ -165,6 +162,21 @@ watch(
     if (agentId) applyEmbedSelection()
   }
 )
+
+async function resolveEmbedContext() {
+  if (!locationId.value) return
+  const qs = new URLSearchParams({ locationId: locationId.value })
+  if (companyId.value) qs.set('companyId', companyId.value)
+  if (props.initialAgentId) qs.set('agentId', props.initialAgentId)
+  try {
+    const response = await fetch(`/api/embed/resolve?${qs.toString()}`)
+    const data = await response.json().catch(() => ({}))
+    if (data.companyId) companyId.value = data.companyId
+    return data
+  } catch {
+    return null
+  }
+}
 
 async function loadAgents() {
   if (!locationId.value) return
@@ -176,7 +188,6 @@ async function loadAgents() {
     const data = await response.json()
     if (data.success) {
       agents.value = data.data
-      lastSync.value = new Date()
       applyEmbedSelection()
     }
   } catch (err: any) {
@@ -186,24 +197,38 @@ async function loadAgents() {
   }
 }
 
+function currentCompanyId() {
+  return companyId.value
+    || props.initialCompanyId
+    || new URLSearchParams(window.location.search).get('companyId')
+    || ''
+}
+
 async function syncAgents() {
   if (!locationId.value) return
   syncing.value = true
+  error.value = ''
   try {
-    const companyId = props.initialCompanyId || new URLSearchParams(window.location.search).get('companyId') || ''
-    const qs = companyId ? `?companyId=${encodeURIComponent(companyId)}` : ''
+    const cid = currentCompanyId()
+    if (!cid) {
+      await resolveEmbedContext()
+    }
+    const resolvedCompanyId = currentCompanyId()
+    const qs = resolvedCompanyId ? `?companyId=${encodeURIComponent(resolvedCompanyId)}` : ''
     const response = await fetch(`/api/agents/sync-location/${locationId.value}${qs}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ companyId: companyId || undefined }),
+      body: JSON.stringify({ companyId: resolvedCompanyId || undefined }),
     })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-      throw new Error(data.hint || data.error || `HTTP ${response.status}`)
+      throw new Error(data.hint || data.message || data.error || `HTTP ${response.status}`)
     }
     if (data.success) {
       agents.value = data.data
       lastSync.value = new Date()
+      analysisKey.value += 1
+      applyEmbedSelection()
     }
   } catch (err: any) {
     error.value = `Sync failed: ${err.message}`
@@ -236,18 +261,23 @@ async function loadAgentCalls(agentId: string) {
 async function syncAgentCalls(agentId: string) {
   if (!locationId.value) return
   syncingCalls.value[agentId] = true
+  error.value = ''
   try {
     const response = await fetch(`/api/calls/sync-agent/${agentId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         locationId: locationId.value,
-        companyId: props.initialCompanyId || new URLSearchParams(window.location.search).get('companyId') || undefined,
+        companyId: currentCompanyId() || undefined,
       })
     })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const data = await response.json()
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(data.message || data.error || `HTTP ${response.status}`)
+    }
     if (data.success) agentCalls.value[agentId] = data.data
+  } catch (err: any) {
+    error.value = `Call sync failed: ${err.message}`
   } finally {
     syncingCalls.value[agentId] = false
   }
@@ -310,7 +340,7 @@ function formatCallDate(dateStr: string) {
       {{ error }}
     </div>
 
-    <nav v-if="currentEmbedAgent" class="flex shrink-0 gap-1 overflow-x-auto border-b border-slate-200 px-3">
+    <nav v-if="currentEmbedAgent" class="ao-embed-tabs">
       <button
         v-for="tab in [
           { id: 'analysis', label: 'Analysis' },
@@ -321,8 +351,7 @@ function formatCallDate(dateStr: string) {
         ]"
         :key="tab.id"
         type="button"
-        class="border-b-2 px-3 py-2 text-sm font-medium whitespace-nowrap"
-        :class="embedTab === tab.id ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-800'"
+        :class="embedTab === tab.id ? 'is-active' : ''"
         @click="setAgentTab(currentEmbedAgent.id, tab.id as any)"
       >
         {{ tab.label }}
@@ -356,10 +385,11 @@ function formatCallDate(dateStr: string) {
         </div>
         <AgentAnalysis
           v-else-if="embedTab === 'analysis'"
-          :key="`${currentEmbedAgent.id}-${lastSync?.getTime() || 0}`"
+          :key="`${currentEmbedAgent.id}-${analysisKey}`"
           :agent-id="currentEmbedAgent.id"
           :agent-name="displayName"
           :location-id="locationId"
+          compact
         />
         <AgentMetrics
           v-else-if="embedTab === 'metrics'"
@@ -693,3 +723,47 @@ function formatCallDate(dateStr: string) {
     </div>
   </div>
 </template>
+
+<style scoped>
+.ao-embed-tabs {
+  display: flex;
+  flex-flow: row nowrap;
+  align-items: stretch;
+  flex-shrink: 0;
+  height: 44px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 0 12px;
+  gap: 0;
+  background: #fff;
+}
+
+.ao-embed-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  margin: 0;
+  padding: 0 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.ao-embed-tabs button:hover {
+  color: #1e293b;
+}
+
+.ao-embed-tabs button.is-active {
+  color: #4338ca;
+  border-bottom-color: #4f46e5;
+}
+</style>
