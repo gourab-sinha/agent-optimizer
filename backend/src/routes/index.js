@@ -8,6 +8,7 @@ import analysisRoutes from './analysisRoutes.js';
 import patternRoutes from './patternRoutes.js';
 import testRoutes from './testRoutes.js';
 import recommendationRoutes from './recommendations.js';
+import optimizeRoutes from './optimizeRoutes.js';
 import embedRoutes from './embedRoutes.js';
 import webhookRoutes from './webhookRoutes.js';
 
@@ -50,6 +51,9 @@ router.use('/tests', testRoutes);
 
 // Recommendation routes
 router.use('/recommendations', recommendationRoutes);
+
+// Guided Optimize pipeline
+router.use('/optimize', optimizeRoutes);
 
 // 404 handler for API routes
 router.use((req, res) => {

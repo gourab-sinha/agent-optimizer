@@ -23,6 +23,7 @@ vi.mock('../../src/services/testGenerationService.js', () => ({
     generateTestCases: vi.fn(),
     getTestCases: vi.fn(),
     getTestCaseDetails: vi.fn(),
+    updateTestCase: vi.fn(),
     archiveTestCase: vi.fn(),
   },
 }));
@@ -140,6 +141,14 @@ describe('Feature: Analysis / Patterns / Tests / Recommendations', () => {
     expect(res.status).toBe(200);
     testGen.getTestCaseDetails.mockRejectedValue(new Error('nf'));
     res = await request(app).get('/api/tests/t1');
+    expect(res.status).toBe(404);
+
+    testGen.updateTestCase.mockResolvedValue({ id: 't1', title: 'Updated' });
+    res = await request(app).put('/api/tests/t1').send({ title: 'Updated', scenario: 'New scene' });
+    expect(res.status).toBe(200);
+    expect(res.body.testCase.title).toBe('Updated');
+    testGen.updateTestCase.mockRejectedValue(new Error('Test case t1 not found'));
+    res = await request(app).put('/api/tests/t1').send({ title: 'x' });
     expect(res.status).toBe(404);
 
     testGen.archiveTestCase.mockResolvedValue({ id: 't1' });

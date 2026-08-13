@@ -120,6 +120,23 @@ router.get('/:testCaseId', async (req, res) => {
  * @desc    Archive or unarchive a test case
  * @body    { archived: true|false }
  */
+router.put('/:testCaseId', async (req, res) => {
+  try {
+    const { testCaseId } = req.params;
+    const testCase = await testGenerationService.updateTestCase(testCaseId, req.body || {});
+    res.json({
+      success: true,
+      testCase,
+    });
+  } catch (error) {
+    console.error('Update test case error:', error);
+    res.status(error.message?.includes('not found') ? 404 : 400).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
 router.put('/:testCaseId/archive', async (req, res) => {
   try {
     const { testCaseId } = req.params;

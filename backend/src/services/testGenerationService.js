@@ -472,6 +472,35 @@ export async function getTestCaseDetails(testCaseId) {
 /**
  * Archive/unarchive a test case
  */
+export async function updateTestCase(testCaseId, patch = {}) {
+  const current = await getTestCaseDetails(testCaseId);
+  const title = patch.title != null ? String(patch.title).trim() : current.title;
+  const scenario = patch.scenario != null ? String(patch.scenario).trim() : current.scenario;
+  const persona = patch.persona && typeof patch.persona === 'object'
+    ? { ...current.persona, ...patch.persona }
+    : current.persona;
+
+  if (!title) throw new Error('Test case title is required');
+  if (!scenario) throw new Error('Test case scenario is required');
+
+  const result = await db.query(
+    `UPDATE test_cases
+     SET title = $1,
+         scenario = $2,
+         persona = $3,
+         updated_at = now()
+     WHERE id = $4 AND is_deleted = false
+     RETURNING *`,
+    [title, scenario, JSON.stringify(persona), testCaseId]
+  );
+
+  if (result.rows.length === 0) {
+    throw new Error(`Test case ${testCaseId} not found`);
+  }
+
+  return result.rows[0];
+}
+
 export async function archiveTestCase(testCaseId, archived = true) {
   const result = await db.query(
     `UPDATE test_cases
@@ -492,5 +521,6 @@ export default {
   generateTestCases,
   getTestCases,
   getTestCaseDetails,
+  updateTestCase,
   archiveTestCase
 };

@@ -4,6 +4,7 @@ import AgentAnalysis from './AgentAnalysis.vue'
 import AgentMetrics from './AgentMetrics.vue'
 import AgentTests from './AgentTests.vue'
 import AgentRecommendations from './AgentRecommendations.vue'
+import OptimizePipeline from './OptimizePipeline.vue'
 
 const props = withDefaults(defineProps<{
   embed?: boolean
@@ -26,16 +27,12 @@ const loading = ref(false)
 const syncing = ref(false)
 const error = ref('')
 const lastSync = ref<Date | null>(null)
-const lastCallSync = ref<Date | null>(null)
-const callsPulled = ref(false)
-const analysisKey = ref(0)
 const expandedAgent = ref<string | null>(null)
 const agentCalls = ref<Record<string, any[]>>({})
 const loadingCalls = ref<Record<string, boolean>>({})
 const syncingCalls = ref<Record<string, boolean>>({})
-type WorkspaceTab = 'overview' | 'calls' | 'analysis' | 'metrics' | 'tests' | 'recommendations'
+type WorkspaceTab = 'calls' | 'analysis' | 'metrics' | 'tests' | 'recommendations'
 const agentTabs = ref<Record<string, WorkspaceTab>>({})
-const setupStep = ref<'idle' | 'connect' | 'agent' | 'calls' | 'ready'>('idle')
 
 const visibleAgents = computed(() => {
   if (!props.embed || !props.initialAgentId) return agents.value
@@ -58,40 +55,23 @@ const displayName = computed(() => {
   return 'Voice AI Agent'
 })
 
-const embedTab = computed(() => {
-  const id = currentEmbedAgent.value?.id
-  return id ? getAgentTab(id) : 'overview'
-})
-
-const embedCalls = computed(() => {
-  const id = currentEmbedAgent.value?.id
-  return id ? (agentCalls.value[id] || []) : []
-})
-
-const isBootstrapping = computed(() =>
-  props.embed && (setupStep.value === 'connect' || setupStep.value === 'agent' || setupStep.value === 'calls')
-)
-
 function applyEmbedSelection() {
   if (!props.embed || !props.initialAgentId) return
   expandedAgent.value = props.initialAgentId
   if (!agentTabs.value[props.initialAgentId]) {
-    agentTabs.value[props.initialAgentId] = 'overview'
+    agentTabs.value[props.initialAgentId] = 'analysis'
   }
 }
 
 function getAgentTab(agentId: string) {
-  return agentTabs.value[agentId] || (props.embed ? 'overview' : 'calls')
+  return agentTabs.value[agentId] || 'calls'
 }
 
 function setAgentTab(agentId: string, tab: WorkspaceTab) {
   agentTabs.value[agentId] = tab
 }
 
-function selectEmbedTab(tabId: string) {
-  if (!currentEmbedAgent.value) return
-  setAgentTab(currentEmbedAgent.value.id, tabId as WorkspaceTab)
-}
+
 
 // SSO Authentication
 async function requestSSOFromParent() {
@@ -145,9 +125,7 @@ onMounted(async () => {
       locationId.value = devLocationId
       companyId.value = props.initialCompanyId || urlParams.get('companyId') || companyId.value
       applyEmbedSelection()
-      if (props.embed) {
-        await bootstrapEmbedWorkspace()
-      } else {
+      if (!props.embed) {
         await loadAgents()
       }
     } else if (ssoKey && ssoKey !== '{{sso_key}}') {
@@ -190,28 +168,6 @@ async function resolveEmbedContext() {
   } catch {
     return null
   }
-}
-
-async function bootstrapEmbedWorkspace() {
-  setupStep.value = 'connect'
-  error.value = ''
-  await resolveEmbedContext()
-
-  setupStep.value = 'agent'
-  await syncAgents()
-  if (!agents.value.length) {
-    await loadAgents()
-  }
-  applyEmbedSelection()
-
-  setupStep.value = 'calls'
-  const agentId = currentEmbedAgent.value?.id || props.initialAgentId
-  if (agentId) {
-    await loadAgentCalls(agentId)
-    await syncAgentCalls(agentId)
-  }
-
-  setupStep.value = 'ready'
 }
 
 async function loadAgents() {
@@ -263,7 +219,6 @@ async function syncAgents() {
     if (data.success) {
       agents.value = data.data
       lastSync.value = new Date()
-      analysisKey.value += 1
       applyEmbedSelection()
     }
   } catch (err: any) {
@@ -314,11 +269,8 @@ async function syncAgentCalls(agentId: string) {
       throw new Error(data.message || data.error || `HTTP ${response.status}`)
     }
     agentCalls.value[agentId] = data.success ? (data.data || []) : []
-    lastCallSync.value = new Date()
-    callsPulled.value = true
   } catch (err: any) {
     error.value = `Call sync failed: ${err.message}`
-    callsPulled.value = true
   } finally {
     syncingCalls.value[agentId] = false
   }
@@ -347,158 +299,13 @@ function formatCallDate(dateStr: string) {
 </script>
 
 <template>
-  <!-- Full-height embed workspace inside the HighLevel builder iframe -->
-  <div v-if="embed" class="ao-workspace">
-    <header class="ao-workspace-header">
-      <div class="min-w-0">
-        <p class="ao-kicker">Optimize</p>
-      </div>
-      <button
-        v-if="currentEmbedAgent && !isBootstrapping"
-        type="button"
-        class="ao-btn ao-btn-ghost"
-        :disabled="syncing || !!syncingCalls[currentEmbedAgent.id] || !locationId"
-        @click="bootstrapEmbedWorkspace"
-      >
-        {{ syncing || syncingCalls[currentEmbedAgent.id] ? 'Refreshing…' : 'Refresh' }}
-      </button>
-    </header>
-
-    <div v-if="error" class="ao-banner ao-banner-error">{{ error }}</div>
-
-    <nav class="ao-tabs" aria-label="Optimizer sections">
-      <button
-        v-for="tab in [
-          { id: 'overview', label: 'Overview' },
-          { id: 'calls', label: 'Calls' },
-          { id: 'analysis', label: 'Analysis' },
-          { id: 'tests', label: 'Tests' },
-          { id: 'recommendations', label: 'Improve' },
-        ]"
-        :key="tab.id"
-        type="button"
-        :class="{ 'is-active': embedTab === tab.id }"
-        @click="selectEmbedTab(tab.id)"
-      >
-        {{ tab.label }}
-      </button>
-    </nav>
-
-    <main class="ao-main">
-      <section v-if="isBootstrapping" class="ao-setup">
-        <p class="ao-setup-title">Getting the optimizer ready</p>
-        <p class="ao-setup-copy">First visit for this agent — we sync the configuration and pull call history from HighLevel.</p>
-        <ol class="ao-steps">
-          <li :class="{ done: setupStep !== 'connect', current: setupStep === 'connect' }">Connect this location</li>
-          <li :class="{ done: setupStep === 'calls' || setupStep === 'ready', current: setupStep === 'agent' }">Sync agent configuration</li>
-          <li :class="{ done: setupStep === 'ready', current: setupStep === 'calls' }">Pull call history</li>
-        </ol>
-      </section>
-
-      <section v-else-if="embedTab === 'overview'" class="ao-overview">
-        <div class="ao-stat-row">
-          <article class="ao-stat">
-            <p class="ao-stat-label">Calls</p>
-            <p class="ao-stat-value">{{ embedCalls.length }}</p>
-            <p class="ao-stat-meta">{{ callsPulled ? (lastCallSync ? `Pulled ${formatDate(lastCallSync)}` : 'Pulled from HighLevel') : 'Not pulled yet' }}</p>
-          </article>
-          <article class="ao-stat">
-            <p class="ao-stat-label">Agent</p>
-            <p class="ao-stat-value">{{ lastSync ? 'Synced' : 'Ready' }}</p>
-            <p class="ao-stat-meta">{{ lastSync ? formatDate(lastSync) : 'Using current builder agent' }}</p>
-          </article>
-          <article class="ao-stat">
-            <p class="ao-stat-label">Next step</p>
-            <p class="ao-stat-value">{{ embedCalls.length ? 'Analyze' : 'Get calls' }}</p>
-            <p class="ao-stat-meta">{{ embedCalls.length ? 'Score conversations' : 'Need at least one call' }}</p>
-          </article>
-        </div>
-
-        <div v-if="!embedCalls.length" class="ao-empty">
-          <h2>No calls to analyze yet</h2>
-          <p>
-            This is expected on a first visit if the agent has not taken live or test calls.
-            Place a call from <strong>Deploy</strong>, then refresh. Empty call history is not a tab bug —
-            HighLevel has nothing to pull yet.
-          </p>
-          <div class="ao-empty-actions">
-            <button
-              type="button"
-              class="ao-btn ao-btn-primary"
-              :disabled="!currentEmbedAgent || !!syncingCalls[currentEmbedAgent.id]"
-              @click="currentEmbedAgent && syncAgentCalls(currentEmbedAgent.id)"
-            >
-              {{ currentEmbedAgent && syncingCalls[currentEmbedAgent.id] ? 'Pulling calls…' : 'Pull calls now' }}
-            </button>
-            <button type="button" class="ao-btn ao-btn-ghost" @click="currentEmbedAgent && setAgentTab(currentEmbedAgent.id, 'calls')">
-              View Calls tab
-            </button>
-          </div>
-        </div>
-
-        <div v-else class="ao-ready">
-          <h2>{{ embedCalls.length }} call{{ embedCalls.length === 1 ? '' : 's' }} ready</h2>
-          <p>Run analysis to score conversations, then use Improve for recommended prompt and action changes.</p>
-          <div class="ao-empty-actions">
-            <button type="button" class="ao-btn ao-btn-primary" @click="currentEmbedAgent && setAgentTab(currentEmbedAgent.id, 'analysis')">
-              Analyze calls
-            </button>
-            <button type="button" class="ao-btn ao-btn-ghost" @click="currentEmbedAgent && setAgentTab(currentEmbedAgent.id, 'calls')">
-              Review call log
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <section v-else-if="currentEmbedAgent && embedTab === 'calls'" class="ao-calls">
-        <div v-if="loadingCalls[currentEmbedAgent.id] || syncingCalls[currentEmbedAgent.id]" class="ao-muted">
-          {{ syncingCalls[currentEmbedAgent.id] ? 'Pulling calls from HighLevel…' : 'Loading calls…' }}
-        </div>
-        <div v-else-if="embedCalls.length" class="ao-call-list">
-          <article v-for="call in embedCalls" :key="call.id" class="ao-call">
-            <p class="ao-call-summary">{{ call.summary || 'No summary available' }}</p>
-            <p class="ao-call-meta">
-              <span>{{ call.kind || 'call' }}</span>
-              <span>{{ formatCallDate(call.created_at_ghl) }}</span>
-              <span>{{ formatDuration(call.duration_s) }}</span>
-            </p>
-          </article>
-        </div>
-        <div v-else class="ao-empty">
-          <h2>No call logs in HighLevel</h2>
-          <p>
-            We already tried to pull calls for this agent. HighLevel returned none.
-            Make a test or live call, then pull again.
-          </p>
-          <button
-            type="button"
-            class="ao-btn ao-btn-primary"
-            :disabled="!!syncingCalls[currentEmbedAgent.id]"
-            @click="syncAgentCalls(currentEmbedAgent.id)"
-          >
-            {{ syncingCalls[currentEmbedAgent.id] ? 'Pulling calls…' : 'Pull calls now' }}
-          </button>
-        </div>
-      </section>
-
-      <section v-else-if="currentEmbedAgent && embedTab === 'analysis'" class="ao-panel">
-        <AgentAnalysis
-          :key="`${currentEmbedAgent.id}-${analysisKey}`"
-          :agent-id="currentEmbedAgent.id"
-          :agent-name="displayName"
-          :location-id="locationId"
-          compact
-        />
-      </section>
-
-      <section v-else-if="currentEmbedAgent && embedTab === 'tests'" class="ao-panel">
-        <AgentTests :agent-id="currentEmbedAgent.id" />
-      </section>
-
-      <section v-else-if="currentEmbedAgent && embedTab === 'recommendations'" class="ao-panel">
-        <AgentRecommendations :agent-id="currentEmbedAgent.id" />
-      </section>
-    </main>
+  <div v-if="embed" class="h-full min-h-0">
+    <OptimizePipeline
+      :agent-id="initialAgentId"
+      :location-id="initialLocationId"
+      :company-id="initialCompanyId"
+      :agent-name="displayName"
+    />
   </div>
 
   <div

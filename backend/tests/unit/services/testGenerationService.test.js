@@ -20,6 +20,7 @@ import {
   generateTestCases,
   getTestCases,
   getTestCaseDetails,
+  updateTestCase,
   archiveTestCase,
 } from '../../../src/services/testGenerationService.js';
 
@@ -190,5 +191,27 @@ describe('services/testGenerationService', () => {
     await expect(archiveTestCase('x')).rejects.toThrow('not found');
     db.query.mockResolvedValue({ rows: [{ id: 'tc1' }] });
     expect(await archiveTestCase('tc1', true)).toEqual({ id: 'tc1' });
+  });
+
+  it('updateTestCase merges persona and title', async () => {
+    db.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'tc1',
+          title: 'Old',
+          scenario: 'Scene',
+          persona: { name: 'Ann' },
+        }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ id: 'tc1', title: 'New', scenario: 'Better', persona: { name: 'Ann', needs: 'book' } }],
+      });
+
+    const updated = await updateTestCase('tc1', { title: 'New', scenario: 'Better', persona: { needs: 'book' } });
+    expect(updated.title).toBe('New');
+    expect(db.query).toHaveBeenLastCalledWith(
+      expect.stringContaining('UPDATE test_cases'),
+      ['New', 'Better', JSON.stringify({ name: 'Ann', needs: 'book' }), 'tc1']
+    );
   });
 });
