@@ -65,6 +65,20 @@ const modalItem = ref<any>(null)
 const draft = ref({ title: '', scenario: '', name: '', needs: '', style: '' })
 
 const currentHint = computed(() => STEPS.find((item) => item.id === currentStep.value)?.hint || '')
+const processedCount = computed(() => {
+  if (phase.value === 'done' || (phase.value === 'idle' && alreadyOptimized.value)) return STEPS.length
+  return doneSteps.value.length
+})
+const progressPercent = computed(() => Math.round((processedCount.value / STEPS.length) * 100))
+const progressLabel = computed(() => {
+  if (phase.value === 'running' || phase.value === 'finishing') {
+    return `${progressPercent.value}% · ${processedCount.value} of ${STEPS.length} complete`
+  }
+  if (phase.value === 'select') return `${progressPercent.value}% · choose tests to continue`
+  if (phase.value === 'done' || (phase.value === 'idle' && alreadyOptimized.value)) return '100% · run complete'
+  if (phase.value === 'blocked') return `${progressPercent.value}% · waiting on calls`
+  return `${progressPercent.value}%`
+})
 const selectedTests = computed(() => testCases.value.filter((item) => selectedIds.value.includes(item.id)))
 const allSelected = computed(() => testCases.value.length > 0 && selectedIds.value.length === testCases.value.length)
 const criteria = computed(() => rubric.value?.criteria || [])
@@ -470,6 +484,16 @@ onMounted(loadStatus)
       </button>
     </header>
 
+    <div class="progress" aria-label="Optimize progress">
+      <div class="progress-top">
+        <span>{{ progressLabel }}</span>
+        <strong>{{ progressPercent }}%</strong>
+      </div>
+      <div class="progress-track">
+        <span :style="{ width: `${progressPercent}%` }" />
+      </div>
+    </div>
+
     <p v-if="toast" class="toast">{{ toast }}</p>
     <p v-if="error" class="banner">{{ error }}</p>
 
@@ -715,6 +739,41 @@ onMounted(loadStatus)
 h1 { margin: 2px 0 4px; font-size: 20px; }
 .version { margin: 0; color: #64748b; font-size: 12px; }
 .version.ready { color: #047857; }
+
+.progress {
+  padding: 10px 16px 12px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.progress-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.progress-top strong {
+  color: #2563eb;
+  font-size: 13px;
+}
+
+.progress-track {
+  height: 4px;
+  border-radius: 99px;
+  background: #e5e7eb;
+  overflow: hidden;
+}
+
+.progress-track span {
+  display: block;
+  height: 100%;
+  background: #2563eb;
+  transition: width .25s ease;
+}
 
 .workspace {
   flex: 1;
