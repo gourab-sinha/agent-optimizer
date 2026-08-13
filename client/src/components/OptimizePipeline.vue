@@ -822,7 +822,16 @@ h1 { margin: 2px 0 4px; font-size: 20px; }
 .metrics .ok { color: #15803d; }
 .metrics .bad { color: #b91c1c; }
 
-.rows { flex: 1; min-height: 0; overflow: auto; }
+.rows {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #f3f4f6;
+}
 
 .row {
   display: flex;
@@ -830,15 +839,28 @@ h1 { margin: 2px 0 4px; font-size: 20px; }
   justify-content: space-between;
   gap: 12px;
   width: 100%;
-  padding: 12px 16px;
-  border: 0;
-  border-bottom: 1px solid #f1f5f9;
+  padding: 12px 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
   background: #fff;
   text-align: left;
   cursor: pointer;
+  box-shadow: 0 1px 1px rgba(16, 24, 40, .03);
 }
-.row:hover { background: #f8fafc; }
-.row.picked { background: #eff6ff; }
+
+.row:nth-child(even) {
+  background: #f8fafc;
+}
+
+.row:hover {
+  border-color: #cbd5e1;
+  background: #fff;
+}
+
+.row.picked {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
 .row-hit {
   display: flex;
   align-items: center;
