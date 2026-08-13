@@ -84,6 +84,11 @@ const allSelected = computed(() => testCases.value.length > 0 && selectedIds.val
 const criteria = computed(() => rubric.value?.criteria || [])
 const canEditTests = computed(() => phase.value === 'select' || phase.value === 'idle' || phase.value === 'done')
 const passedCount = computed(() => runResults.value.filter((item) => item.passed).length)
+const isViewBusy = computed(() => {
+  if (phase.value !== 'running' && phase.value !== 'finishing') return false
+  const step = STEPS.find((item) => item.view === selectedView.value)
+  return Boolean(step && currentStep.value === step.id && !doneSteps.value.includes(step.id))
+})
 
 function stepCount(step: StepDef) {
   if (step.view === 'calls' || step.view === 'evaluate') return calls.value.length
@@ -240,8 +245,25 @@ async function loadStatus() {
   }
 }
 
+function clearStepData(step: StepId) {
+  if (step === 'sync_calls') calls.value = []
+  if (step === 'rubric') rubric.value = null
+  if (step === 'evaluate') { /* keep calls; hide via isViewBusy */ }
+  if (step === 'patterns') patterns.value = []
+  if (step === 'tests') {
+    testCases.value = []
+    selectedIds.value = []
+  }
+  if (step === 'run') {
+    runResults.value = []
+    applyRunMetrics({}, [])
+  }
+  if (step === 'recs') recommendations.value = []
+}
+
 async function runStep(step: StepId, extra: Record<string, unknown> = {}) {
   currentStep.value = step
+  clearStepData(step)
   const def = STEPS.find((item) => item.id === step)
   if (def?.view) selectedView.value = def.view
   const data = await api('/api/optimize/step', {
@@ -271,7 +293,13 @@ async function startOptimize() {
   toast.value = ''
   doneSteps.value = []
   selectedIds.value = []
+  calls.value = []
+  rubric.value = null
+  patterns.value = []
+  testCases.value = []
   runResults.value = []
+  recommendations.value = []
+  applyRunMetrics({}, [])
   closeModal()
 
   try {
@@ -530,7 +558,12 @@ onMounted(loadStatus)
           </div>
         </div>
 
-        <div v-if="selectedView === 'run'" class="metrics">
+        <div v-if="isViewBusy" class="working">
+          <p>Working on this step…</p>
+          <span>Awaiting for results.</span>
+        </div>
+
+        <div v-else-if="selectedView === 'run'" class="metrics">
           <article>
             <strong>{{ runMetrics.total }}</strong>
             <span>Tests</span>
@@ -553,7 +586,7 @@ onMounted(loadStatus)
           </article>
         </div>
 
-        <div class="rows">
+        <div v-if="!isViewBusy" class="rows">
           <template v-if="selectedView === 'calls' || selectedView === 'evaluate'">
             <button v-for="call in calls" :key="call.id" type="button" class="row" @click="openModal(selectedView, call)">
               <div class="main">
@@ -880,6 +913,27 @@ h1 { margin: 2px 0 4px; font-size: 20px; }
 .metrics span { color: #6b7280; font-size: 11px; }
 .metrics .ok { color: #15803d; }
 .metrics .bad { color: #b91c1c; }
+
+.working {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 40px 16px;
+  color: #6b7280;
+  text-align: center;
+}
+
+.working p {
+  margin: 0;
+  color: #111827;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.working span { font-size: 12px; }
 
 .rows {
   flex: 1;
