@@ -6,6 +6,8 @@ vi.mock('../../../src/db/connection.js', () => ({
     getClient: vi.fn(),
     healthCheck: vi.fn(),
     close: vi.fn(),
+    batchInsert: vi.fn().mockResolvedValue({ rowCount: 0 }),
+    batchUpsert: vi.fn().mockResolvedValue({ rowCount: 0 }),
     pool: {},
   },
 }));

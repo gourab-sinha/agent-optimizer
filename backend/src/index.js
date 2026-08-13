@@ -10,6 +10,11 @@ import { fileURLToPath } from 'url';
 
 import db from './db/connection.js';
 import apiRoutes from './routes/index.js';
+import { requestContextMiddleware, metricsHandler, healthHandler } from './infra/requestContext.js';
+import { initRedis, closeRedis } from './infra/redis.js';
+import logger from './infra/logger.js';
+import { metrics, METRIC_NAMES } from './infra/metrics.js';
+import { initQueue, startWorker, getQueueStats } from './jobs/queue.js';
 
 dotenv.config();
 
@@ -28,6 +33,9 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 // Trust proxy (required for ngrok and other reverse proxies)
 app.set('trust proxy', 1);
+
+// Request context and metrics (observability - non-breaking)
+app.use(requestContextMiddleware);
 
 // Security headers.
 // Allow HighLevel to iframe the UI (Custom JS Optimize tab / Custom Pages).
@@ -104,6 +112,14 @@ const limiter = rateLimit({
   legacyHeaders: false,
   skip: (req) => req.method === 'OPTIONS' || process.env.NODE_ENV === 'test',
   message: { success: false, error: 'Too many requests' },
+  handler: (req, res, next, options) => {
+    // Track rate limit hits for observability
+    metrics.inc(METRIC_NAMES.RATE_LIMIT_HIT, {
+      path: req.path,
+      locationId: req.tenantContext?.locationId || 'unknown',
+    });
+    res.status(options.statusCode).json(options.message);
+  },
 });
 
 app.use('/api/', limiter);
@@ -113,27 +129,18 @@ app.use('/api/', limiter);
 // ============================================================================
 
 // Root health check (outside /api for monitoring)
-app.get('/health', async (req, res) => {
-  try {
-    const dbHealthy = await db.healthCheck();
+app.get('/health', healthHandler);
 
-    const health = {
-      status: dbHealthy.healthy ? 'healthy' : 'unhealthy',
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
-      database: dbHealthy,
-      environment: process.env.NODE_ENV || 'development'
-    };
-
-    const statusCode = dbHealthy.healthy ? 200 : 503;
-    res.status(statusCode).json(health);
-
-  } catch (error) {
-    res.status(503).json({
-      status: 'unhealthy',
-      error: error.message
-    });
+// Metrics endpoint for observability (protected in production)
+app.get('/metrics', (req, res, next) => {
+  // In production, require a secret token
+  if (process.env.NODE_ENV === 'production') {
+    const token = req.headers['x-metrics-token'] || req.query.token;
+    if (token !== process.env.METRICS_TOKEN) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
   }
+  metricsHandler(req, res);
 });
 
 // Mount API routes under /api prefix
@@ -177,7 +184,13 @@ app.use((req, res) => {
 
 // Error handler
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
+  logger.error('Unhandled error', {
+    error: err,
+    requestId: req.id,
+    path: req.path,
+    method: req.method,
+    ...req.tenantContext,
+  });
 
   const statusCode = err.statusCode || 500;
   const message = process.env.NODE_ENV === 'production'
@@ -187,6 +200,7 @@ app.use((err, req, res, next) => {
   res.status(statusCode).json({
     error: err.name || 'Error',
     message,
+    requestId: req.id,
     ...(process.env.NODE_ENV !== 'production' && { stack: err.stack })
   });
 });
@@ -197,34 +211,55 @@ app.use((err, req, res, next) => {
 
 async function start() {
   try {
-    console.log('🚀 Voice AI Agent Optimizer');
-    console.log('================================');
-    console.log('');
+    logger.info('Voice AI Agent Optimizer starting...');
 
     // Check database connection
-    console.log('Checking database connection...');
+    logger.info('Checking database connection...');
     const dbHealthy = await db.healthCheck();
 
-    if (!dbHealthy) {
+    if (!dbHealthy.healthy) {
       throw new Error('Database connection failed');
     }
+    logger.info('Database connected', { poolSize: dbHealthy.poolSize });
+
+    // Initialize Redis (optional - graceful fallback if not configured)
+    logger.info('Initializing Redis...');
+    await initRedis();
+
+    // Initialize job queue (requires Redis)
+    logger.info('Initializing job queue...');
+    const queueInitialized = await initQueue();
+    if (queueInitialized) {
+      // Start worker in same process (for single-process mode)
+      // In production with multiple workers, run worker separately
+      if (process.env.WORKER_MODE !== 'separate') {
+        await startWorker();
+      }
+    }
+
+    // Update DB pool metrics periodically
+    setInterval(() => {
+      const poolStats = db.pool;
+      if (poolStats) {
+        metrics.set(METRIC_NAMES.DB_POOL_SIZE, {}, poolStats.totalCount || 0);
+        metrics.set(METRIC_NAMES.DB_POOL_IDLE, {}, poolStats.idleCount || 0);
+        metrics.set(METRIC_NAMES.DB_POOL_WAITING, {}, poolStats.waitingCount || 0);
+      }
+    }, 10000);
 
     // Start server
     app.listen(PORT, HOST, () => {
-      console.log('');
-      console.log('✓ Server started successfully');
-      console.log(`  - Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`  - URL: http://${HOST}:${PORT}`);
-      console.log(`  - Health: http://${HOST}:${PORT}/health`);
-      console.log(`  - API: http://${HOST}:${PORT}/api`);
-      console.log('');
-      console.log('Press Ctrl+C to stop');
+      logger.info('Server started successfully', {
+        environment: process.env.NODE_ENV || 'development',
+        host: HOST,
+        port: PORT,
+        healthUrl: `http://${HOST}:${PORT}/health`,
+        metricsUrl: `http://${HOST}:${PORT}/metrics`,
+      });
     });
 
   } catch (error) {
-    console.error('');
-    console.error('✗ Startup failed:', error.message);
-    console.error(error.stack);
+    logger.error('Startup failed', { error });
     process.exit(1);
   }
 }
@@ -234,16 +269,15 @@ async function start() {
 // ============================================================================
 
 async function shutdown(signal) {
-  console.log('');
-  console.log(`Received ${signal}, shutting down gracefully...`);
+  logger.info(`Received ${signal}, shutting down gracefully...`);
 
   try {
-    // Stop accepting new connections
-    // (Express doesn't have a built-in close method, would need http.Server)
-
     // Stop job queue
     const { stopQueue } = await import('./jobs/queue.js');
     await stopQueue();
+
+    // Close Redis connection
+    await closeRedis();
 
     // Close database connections
     if (typeof db.closePool === 'function') {
@@ -252,11 +286,11 @@ async function shutdown(signal) {
       await db.close();
     }
 
-    console.log('✓ Shutdown complete');
+    logger.info('Shutdown complete');
     process.exit(0);
 
   } catch (error) {
-    console.error('✗ Shutdown error:', error.message);
+    logger.error('Shutdown error', { error });
     process.exit(1);
   }
 }

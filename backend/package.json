@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
+    "start:worker": "WORKER_MODE=separate node src/worker.js",
     "dev": "nodemon src/index.js",
+    "dev:worker": "WORKER_MODE=separate nodemon src/worker.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -29,6 +31,7 @@
     "@gohighlevel/api-client": "^3.0.0",
     "anthropic": "^0.0.0",
     "axios": "^1.19.0",
+    "bullmq": "^5.81.3",
     "compression": "^1.8.1",
     "cors": "^2.8.6",
     "crypto": "^1.0.1",
@@ -37,9 +40,11 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.6.2",
     "helmet": "^8.3.0",
+    "ioredis": "^5.11.1",
     "morgan": "^1.11.0",
     "nodemon": "^3.1.14",
     "openai": "^7.4.0",
+    "p-limit": "^6.2.0",
     "pg": "^8.22.0"
   },
   "devDependencies": {

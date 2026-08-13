@@ -6,6 +6,8 @@
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import db from '../db/connection.js';
+import { metrics, METRIC_NAMES } from '../infra/metrics.js';
+import logger from '../infra/logger.js';
 
 // LLM Provider Configuration
 const LLM_PROVIDER = process.env.LLM_PROVIDER || 'anthropic';
@@ -77,6 +79,19 @@ export async function callLLM({
 
     const latencyMs = Date.now() - startTime;
 
+    // Track metrics for observability
+    const labels = { provider: LLM_PROVIDER, model: result.model, stage };
+    metrics.observe(METRIC_NAMES.LLM_REQUEST_DURATION, labels, latencyMs);
+    metrics.inc(METRIC_NAMES.LLM_REQUEST_TOTAL, labels);
+    metrics.inc(METRIC_NAMES.LLM_TOKENS_INPUT, labels, result.usage.promptTokens);
+    metrics.inc(METRIC_NAMES.LLM_TOKENS_OUTPUT, labels, result.usage.completionTokens);
+
+    // Calculate and track cost
+    const cost = calculateCost({ model: result.model, ...result.usage }, LLM_PROVIDER);
+    if (cost) {
+      metrics.inc(METRIC_NAMES.LLM_COST_USD, labels, cost.totalCost);
+    }
+
     // Track LLM call in database
     await trackLLMCall({
       stage,
@@ -99,7 +114,9 @@ export async function callLLM({
     };
 
   } catch (error) {
-    console.error(`[LLM Service] ${LLM_PROVIDER} API call failed:`, error.message);
+    // Track LLM errors
+    metrics.inc(METRIC_NAMES.LLM_REQUEST_ERRORS, { provider: LLM_PROVIDER, stage });
+    logger.error('LLM API call failed', { provider: LLM_PROVIDER, stage, refId, error: error.message });
     throw new Error(`LLM API call failed: ${error.message}`);
   }
 }
@@ -220,7 +237,7 @@ async function trackLLMCall({
       [stage, refId, model, temperature, promptTokens, completionTokens, latencyMs]
     );
   } catch (error) {
-    console.error('[LLM Service] Failed to track LLM call:', error.message);
+    logger.warn('Failed to track LLM call in database', { error: error.message });
     // Don't throw - tracking failure shouldn't break the main flow
   }
 }

@@ -1,5 +1,6 @@
 import queries from '../db/queries.js';
 import db from '../db/connection.js';
+import { getCachedAgent, invalidateAgentCache } from './cacheService.js';
 
 /**
  * Agent Service
@@ -36,28 +37,30 @@ export async function createAgent(data) {
  * @returns {Promise<Object>} Agent data with latest version ID
  */
 export async function getAgentById(id) {
-  const agent = await queries.getAgentById(id);
+  return getCachedAgent(id, async () => {
+    const agent = await queries.getAgentById(id);
 
-  if (!agent) {
-    throw new Error(`Agent ${id} not found`);
-  }
+    if (!agent) {
+      return null; // Return null instead of throwing for cache compatibility
+    }
 
-  // Get latest agent version
-  const versionResult = await db.query(
-    `SELECT id FROM agent_versions
-     WHERE agent_id = $1 AND is_deleted = false
-     ORDER BY created_at DESC LIMIT 1`,
-    [id]
-  );
+    // Get latest agent version
+    const versionResult = await db.query(
+      `SELECT id FROM agent_versions
+       WHERE agent_id = $1 AND is_deleted = false
+       ORDER BY created_at DESC LIMIT 1`,
+      [id]
+    );
 
-  const latestVersionId = versionResult.rows.length > 0
-    ? versionResult.rows[0].id
-    : null;
+    const latestVersionId = versionResult.rows.length > 0
+      ? versionResult.rows[0].id
+      : null;
 
-  return {
-    ...agent,
-    latestVersionId
-  };
+    return {
+      ...agent,
+      latestVersionId
+    };
+  });
 }
 
 /**
@@ -92,6 +95,9 @@ export async function updateAgent(id, data) {
   if (!agent) {
     throw new Error(`Agent ${id} not found`);
   }
+
+  // Invalidate cache
+  await invalidateAgentCache(id);
 
   return agent;
 }

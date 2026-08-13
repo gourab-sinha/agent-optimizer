@@ -16,9 +16,11 @@ if (!process.env.DATABASE_URL) {
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   min: parseInt(process.env.DB_POOL_MIN || '2', 10),
-  max: parseInt(process.env.DB_POOL_MAX || '10', 10),
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  max: parseInt(process.env.DB_POOL_MAX || '20', 10), // Increased default for scale
+  idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT_MS || '30000', 10),
+  connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT_MS || '5000', 10),
+  // Statement timeout to prevent long-running queries
+  statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT_MS || '30000', 10),
 });
 
 // Log pool errors
@@ -102,10 +104,78 @@ async function close() {
   console.log('Database pool closed');
 }
 
+/**
+ * Batch insert helper - inserts multiple rows efficiently
+ * @param {string} table - Table name
+ * @param {string[]} columns - Column names
+ * @param {Array<Array>} rows - Array of row value arrays
+ * @returns {Promise<Object>} Query result
+ */
+async function batchInsert(table, columns, rows) {
+  if (!rows.length) return { rowCount: 0 };
+
+  const columnList = columns.join(', ');
+  const values = [];
+  const placeholders = [];
+
+  let paramIndex = 1;
+  for (const row of rows) {
+    const rowPlaceholders = [];
+    for (const value of row) {
+      values.push(value);
+      rowPlaceholders.push(`$${paramIndex++}`);
+    }
+    placeholders.push(`(${rowPlaceholders.join(', ')})`);
+  }
+
+  const sql = `INSERT INTO ${table} (${columnList}) VALUES ${placeholders.join(', ')}`;
+  return query(sql, values);
+}
+
+/**
+ * Batch upsert helper - inserts or updates multiple rows
+ * @param {string} table - Table name
+ * @param {string[]} columns - Column names
+ * @param {Array<Array>} rows - Array of row value arrays
+ * @param {string[]} conflictColumns - Columns for ON CONFLICT
+ * @param {string[]} updateColumns - Columns to update on conflict
+ * @returns {Promise<Object>} Query result
+ */
+async function batchUpsert(table, columns, rows, conflictColumns, updateColumns) {
+  if (!rows.length) return { rowCount: 0 };
+
+  const columnList = columns.join(', ');
+  const values = [];
+  const placeholders = [];
+
+  let paramIndex = 1;
+  for (const row of rows) {
+    const rowPlaceholders = [];
+    for (const value of row) {
+      values.push(value);
+      rowPlaceholders.push(`$${paramIndex++}`);
+    }
+    placeholders.push(`(${rowPlaceholders.join(', ')})`);
+  }
+
+  const conflictClause = conflictColumns.join(', ');
+  const updateClause = updateColumns.map(col => `${col} = EXCLUDED.${col}`).join(', ');
+
+  const sql = `
+    INSERT INTO ${table} (${columnList})
+    VALUES ${placeholders.join(', ')}
+    ON CONFLICT (${conflictClause}) DO UPDATE SET ${updateClause}, updated_at = NOW()
+  `;
+
+  return query(sql, values);
+}
+
 export default {
   query,
   getClient,
   healthCheck,
   close,
+  batchInsert,
+  batchUpsert,
   pool
 };

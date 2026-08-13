@@ -139,9 +139,12 @@ describe('services/testGenerationService', () => {
       return { rows: [] };
     });
 
+    // minHappyPath: 1 means only 1 happy path case
+    // maxTotalCases: 2 allows 1 happy path + 1 edge case
     const result = await generateTestCases('a1', {
-      happyPathCount: 1,
-      edgeCaseCount: 1,
+      minHappyPath: 1,
+      maxTotalCases: 2,
+      edgeCasePerPattern: 1,
     });
     expect(result.success).toBe(true);
     expect(result.happyPathCases).toHaveLength(1);
@@ -172,8 +175,9 @@ describe('services/testGenerationService', () => {
       if (sql.includes('FROM findings')) return { rows: [] };
       return { rows: [] };
     });
+    // minHappyPath: 1 means only 1 happy path case, maxTotalCases: 1 means no edge cases
     await expect(
-      generateTestCases('a1', { happyPathCount: 1, edgeCaseCount: 0 })
+      generateTestCases('a1', { minHappyPath: 1, maxTotalCases: 1 })
     ).rejects.toThrow('Failed to generate happy path case');
   });
 

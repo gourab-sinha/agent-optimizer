@@ -65,7 +65,7 @@ describe('recommend/index generateRecommendations', () => {
     });
 
     const result = await generateRecommendations('av-1');
-    expect(assembleInput).toHaveBeenCalledWith('av-1', { patternLimit: 6 });
+    expect(assembleInput).toHaveBeenCalledWith('av-1', { patternLimit: 10 });
     expect(proposeRecommendations).toHaveBeenCalledWith(input, {
       singleShot: false,
     });

@@ -74,8 +74,10 @@ describe('testGenerationService edge case failures', () => {
       return { rows: [] };
     });
 
+    // minHappyPath: 1 means only 1 happy path case
+    // maxTotalCases: 2 allows 1 happy path + 1 edge case
     await expect(
-      generateTestCases('a1', { happyPathCount: 1, edgeCaseCount: 1 })
+      generateTestCases('a1', { minHappyPath: 1, maxTotalCases: 2, edgeCasePerPattern: 1 })
     ).rejects.toThrow('Failed to generate edge case');
   });
 });

@@ -51,8 +51,9 @@ describe('services/agentService', () => {
   });
 
   it('getAgentById includes latestVersionId', async () => {
+    // Returns null when agent not found (for cache compatibility)
     queries.getAgentById.mockResolvedValue(null);
-    await expect(getAgentById('x')).rejects.toThrow('not found');
+    expect(await getAgentById('x')).toBeNull();
 
     queries.getAgentById.mockResolvedValue({ id: 'a1', name: 'A' });
     db.query.mockResolvedValue({ rows: [{ id: 'v1' }] });

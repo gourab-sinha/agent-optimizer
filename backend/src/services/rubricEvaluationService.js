@@ -94,25 +94,23 @@ export async function generateRubricForAgentVersion(agentVersionId) {
 
   const rubricId = rubricResult.rows[0].id;
 
-  // Insert criteria
-  for (const criterion of rubricData.criteria) {
-    await db.query(
-      `INSERT INTO rubric_criteria (
-        rubric_id, key, category, description, check_type, check_spec, severity, enabled
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [
-        rubricId,
-        criterion.key,
-        criterion.category,
-        criterion.description,
-        criterion.checkType,
-        JSON.stringify(criterion.checkSpec),
-        criterion.severity,
-        criterion.enabled !== false, // Default to true if not specified
-      ]
-    );
-  }
+  // Insert criteria using batch insert for better performance
+  const criteriaRows = rubricData.criteria.map(criterion => [
+    rubricId,
+    criterion.key,
+    criterion.category,
+    criterion.description,
+    criterion.checkType,
+    JSON.stringify(criterion.checkSpec),
+    criterion.severity,
+    criterion.enabled !== false, // Default to true if not specified
+  ]);
+
+  await db.batchInsert(
+    'rubric_criteria',
+    ['rubric_id', 'key', 'category', 'description', 'check_type', 'check_spec', 'severity', 'enabled'],
+    criteriaRows
+  );
 
   console.log(`[Rubric] Generated rubric ${rubricId} (v${newVersion}) with ${rubricData.criteria.length} criteria`);
 
@@ -767,8 +765,44 @@ export async function getRubricByAgentVersion(agentVersionId) {
   return result.rows[0];
 }
 
+/**
+ * Evaluate multiple calls in parallel with concurrency control
+ * Used by job queue for batch processing
+ */
+export async function evaluateCallsBatch(callIds, rubricId, options = {}) {
+  const { concurrency = 5 } = options;
+
+  // Dynamic import p-limit for concurrency control
+  const pLimit = (await import('p-limit')).default;
+  const limit = pLimit(concurrency);
+
+  const results = await Promise.all(
+    callIds.map(callId =>
+      limit(async () => {
+        try {
+          const result = await evaluateCall(callId, rubricId);
+          return { callId, success: true, ...result };
+        } catch (error) {
+          return { callId, success: false, error: error.message };
+        }
+      })
+    )
+  );
+
+  const succeeded = results.filter(r => r.success).length;
+  const failed = results.filter(r => !r.success).length;
+
+  return {
+    total: callIds.length,
+    succeeded,
+    failed,
+    results,
+  };
+}
+
 export default {
   generateRubricForAgentVersion,
   evaluateCall,
+  evaluateCallsBatch,
   getRubricByAgentVersion,
 };
