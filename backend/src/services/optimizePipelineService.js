@@ -8,7 +8,7 @@ import {
 } from './rubricEvaluationService.js';
 import { detectPatterns } from './patternDetectionService.js';
 import { generateTestCases, getTestCases } from './testGenerationService.js';
-import { runTests } from './testRunnerService.js';
+import { runTests, getTestResults } from './testRunnerService.js';
 import { generateRecommendations } from '../recommend/index.js';
 
 const STEPS = [
@@ -54,6 +54,8 @@ export async function getOptimizeStatus(agentId) {
       patterns: [],
       recommendations: [],
       lastRun: null,
+      lastRunResults: [],
+      lastRunMetrics: null,
     };
   }
 
@@ -89,6 +91,18 @@ export async function getOptimizeStatus(agentId) {
 
   const lastRun = runResult.rows[0] || null;
   const lastOptimizedAt = recsResult.rows[0]?.created_at || lastRun?.finished_at || lastRun?.created_at || null;
+  const lastRunResults = lastRun ? await getTestResults(lastRun.id) : [];
+  const passed = lastRunResults.filter((row) => row.passed).length;
+  const total = lastRunResults.length;
+  const lastRunMetrics = lastRun ? {
+    total,
+    passed,
+    failed: total - passed,
+    passRate: total ? Number(((passed / total) * 100).toFixed(1)) : 0,
+    status: lastRun.status,
+    startedAt: lastRun.started_at,
+    finishedAt: lastRun.finished_at,
+  } : null;
 
   return {
     version: {
@@ -115,6 +129,8 @@ export async function getOptimizeStatus(agentId) {
       createdAt: row.created_at,
     })),
     lastRun,
+    lastRunResults,
+    lastRunMetrics,
   };
 }
 

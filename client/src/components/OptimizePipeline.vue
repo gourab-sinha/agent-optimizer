@@ -21,17 +21,18 @@ interface StepDef {
   view?: ViewId
   label: string
   hint: string
+  accent: string
 }
 
 const STEPS: StepDef[] = [
-  { id: 'sync_agent', label: 'Sync', hint: 'Pull the latest agent configuration' },
-  { id: 'sync_calls', view: 'calls', label: 'Calls', hint: 'Recent conversations from HighLevel' },
-  { id: 'rubric', view: 'rubric', label: 'Rubric', hint: 'Evaluation criteria from the prompt' },
-  { id: 'evaluate', view: 'evaluate', label: 'Analyze', hint: 'How each call scored' },
-  { id: 'patterns', view: 'patterns', label: 'Issues', hint: 'Repeating failure patterns' },
-  { id: 'tests', view: 'tests', label: 'Tests', hint: 'Choose which tests to run. Click a row to edit.' },
-  { id: 'run', view: 'run', label: 'Run', hint: 'Simulated test outcomes' },
-  { id: 'recs', view: 'recs', label: 'Recommend', hint: 'Suggested prompt and action changes' },
+  { id: 'sync_agent', label: 'Sync', hint: 'Pull the latest agent configuration', accent: '#93c5fd' },
+  { id: 'sync_calls', view: 'calls', label: 'Calls', hint: 'Recent conversations from HighLevel', accent: '#60a5fa' },
+  { id: 'rubric', view: 'rubric', label: 'Rubric', hint: 'Evaluation criteria from the prompt', accent: '#3b82f6' },
+  { id: 'evaluate', view: 'evaluate', label: 'Analyze', hint: 'How each call scored', accent: '#2563eb' },
+  { id: 'patterns', view: 'patterns', label: 'Issues', hint: 'Repeating failure patterns', accent: '#1d4ed8' },
+  { id: 'tests', view: 'tests', label: 'Tests', hint: 'Choose which tests to run. Click a row to edit.', accent: '#1e40af' },
+  { id: 'run', view: 'run', label: 'Run', hint: 'Simulated test outcomes', accent: '#1e3a8a' },
+  { id: 'recs', view: 'recs', label: 'Recommend', hint: 'Suggested prompt and action changes', accent: '#172554' },
 ]
 
 const AUTO_STEPS: StepId[] = ['sync_agent', 'sync_calls', 'rubric', 'evaluate', 'patterns', 'tests']
@@ -52,7 +53,9 @@ const patterns = ref<any[]>([])
 const testCases = ref<any[]>([])
 const selectedIds = ref<string[]>([])
 const runResults = ref<any[]>([])
+const runMetrics = ref({ total: 0, passed: 0, failed: 0, passRate: 0, status: '', startedAt: '', finishedAt: '' })
 const recommendations = ref<any[]>([])
+const navItems = computed(() => STEPS.filter((step) => step.view))
 const version = ref<{ id: string, label: string, createdAt?: string } | null>(null)
 const lastOptimizedAt = ref<string | null>(null)
 const alreadyOptimized = ref(false)
@@ -61,12 +64,68 @@ const modalKind = ref<ModalKind>(null)
 const modalItem = ref<any>(null)
 const draft = ref({ title: '', scenario: '', name: '', needs: '', style: '' })
 
-const progress = computed(() => Math.round((doneSteps.value.length / STEPS.length) * 100))
 const currentHint = computed(() => STEPS.find((item) => item.id === currentStep.value)?.hint || '')
 const selectedTests = computed(() => testCases.value.filter((item) => selectedIds.value.includes(item.id)))
 const allSelected = computed(() => testCases.value.length > 0 && selectedIds.value.length === testCases.value.length)
 const criteria = computed(() => rubric.value?.criteria || [])
 const canEditTests = computed(() => phase.value === 'select' || phase.value === 'idle' || phase.value === 'done')
+const passedCount = computed(() => runResults.value.filter((item) => item.passed).length)
+
+function stepCount(step: StepDef) {
+  if (step.view === 'calls' || step.view === 'evaluate') return calls.value.length
+  if (step.view === 'rubric') return criteria.value.length
+  if (step.view === 'patterns') return patterns.value.length
+  if (step.view === 'tests') return testCases.value.length
+  if (step.view === 'run') return runResults.value.length
+  if (step.view === 'recs') return recommendations.value.length
+  return 0
+}
+
+function stepSummary(step: StepDef) {
+  const state = stepState(step.id)
+  if (state === 'current' && (phase.value === 'running' || phase.value === 'finishing')) return currentHint.value || 'Working…'
+  if (state === 'todo') return 'Waiting'
+  if (step.id === 'sync_agent') return 'Agent synced'
+  if (step.view === 'tests' && phase.value === 'select') {
+    return `${selectedIds.value.length} of ${testCases.value.length} selected`
+  }
+  if (step.view === 'run' && runResults.value.length) {
+    return `${passedCount.value} passed · ${runResults.value.length - passedCount.value} failed`
+  }
+  const count = stepCount(step)
+  if (!count) return state === 'done' ? 'Done' : 'Waiting'
+  const noun = step.view === 'calls' || step.view === 'evaluate' ? 'calls'
+    : step.view === 'rubric' ? 'criteria'
+    : step.view === 'patterns' ? 'issues'
+    : step.view === 'tests' ? 'tests'
+    : step.view === 'run' ? 'results'
+    : 'recommendations'
+  return `${count} ${noun}`
+}
+
+function applyRunMetrics(data: any, results: any[] = []) {
+  const total = Number(data?.total ?? data?.totalTests ?? results.length) || 0
+  const passed = Number(data?.passed ?? data?.totalPassed ?? results.filter((item) => item.passed).length) || 0
+  const failed = Number(data?.failed ?? data?.totalFailed ?? Math.max(0, total - passed)) || 0
+  runMetrics.value = {
+    total,
+    passed,
+    failed,
+    passRate: total ? Number(((passed / total) * 100).toFixed(1)) : 0,
+    status: data?.status || '',
+    startedAt: data?.startedAt || data?.started_at || '',
+    finishedAt: data?.finishedAt || data?.finished_at || '',
+  }
+}
+
+function runDuration() {
+  if (!runMetrics.value.startedAt || !runMetrics.value.finishedAt) return ''
+  const ms = new Date(runMetrics.value.finishedAt).getTime() - new Date(runMetrics.value.startedAt).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return ''
+  const seconds = Math.round(ms / 1000)
+  if (seconds < 60) return `${seconds}s`
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+}
 
 const versionLine = computed(() => {
   if (!version.value) return 'No synced version yet'
@@ -76,23 +135,6 @@ const versionLine = computed(() => {
   }
   if (alreadyOptimized.value) return `Version ${label} · already optimized`
   return `Version ${label} · not optimized yet`
-})
-
-const viewMeta = computed(() => {
-  const map: Record<ViewId, { title: string, empty: string, count: number }> = {
-    calls: { title: 'Calls', empty: 'No calls pulled yet.', count: calls.value.length },
-    rubric: { title: 'Rubric criteria', empty: 'No rubric yet.', count: criteria.value.length },
-    evaluate: { title: 'Call analysis', empty: 'Calls have not been analyzed yet.', count: calls.value.length },
-    patterns: { title: 'Issue patterns', empty: 'No issue patterns yet.', count: patterns.value.length },
-    tests: {
-      title: phase.value === 'select' ? 'Select tests to run' : 'Test cases',
-      empty: 'No test cases yet.',
-      count: testCases.value.length,
-    },
-    run: { title: 'Test results', empty: 'Tests have not been run yet.', count: runResults.value.length },
-    recs: { title: 'Recommendations', empty: 'No recommendations yet.', count: recommendations.value.length },
-  }
-  return map[selectedView.value]
 })
 
 function formatWhen(value: string) {
@@ -139,7 +181,8 @@ function canOpenStep(step: StepDef) {
 }
 
 function openStep(step: StepDef) {
-  if (!step.view || !canOpenStep(step)) return
+  if (!step.view) return
+  if (!canOpenStep(step) && stepState(step.id) !== 'current') return
   selectedView.value = step.view
 }
 
@@ -164,6 +207,8 @@ function applyStatus(data: any) {
   patterns.value = data.patterns || []
   testCases.value = data.testCases || []
   recommendations.value = data.recommendations || []
+  runResults.value = data.lastRunResults || []
+  if (data.lastRunMetrics) applyRunMetrics(data.lastRunMetrics, runResults.value)
   if (data.optimized) {
     doneSteps.value = ['sync_agent', 'sync_calls', 'rubric', 'evaluate', 'patterns', 'tests', 'run', 'recs']
     selectedView.value = recommendations.value.length ? 'recs' : (patterns.value.length ? 'patterns' : 'calls')
@@ -375,6 +420,7 @@ async function continueAfterReview() {
       testCaseIds: selectedTests.value.map((item) => item.id),
     })
     runResults.value = runResult.results || []
+    applyRunMetrics(runResult, runResults.value)
 
     const recResult = await runStep('recs')
     recommendations.value = recResult.recommendations || []
@@ -427,127 +473,138 @@ onMounted(loadStatus)
     <p v-if="toast" class="toast">{{ toast }}</p>
     <p v-if="error" class="banner">{{ error }}</p>
 
-    <div class="progress">
-      <div class="bar"><span :style="{ width: `${phase === 'idle' && alreadyOptimized ? 100 : progress}%` }" /></div>
-      <p class="hint">
-        <template v-if="phase === 'idle' && alreadyOptimized">Click a step or a row to inspect the last run.</template>
-        <template v-else-if="phase === 'idle'">Start the run. Each finished step unlocks its rows below.</template>
-        <template v-else-if="phase === 'running' || phase === 'finishing'">{{ currentHint }}</template>
-        <template v-else-if="phase === 'select'">Check the tests you want to run. Click a row to edit it first.</template>
-        <template v-else-if="phase === 'blocked'">No calls in HighLevel yet.</template>
-        <template v-else-if="phase === 'done'">Click any step to see what it produced.</template>
-        <template v-else>Fix the error, then run again.</template>
-      </p>
-    </div>
-
-    <ol class="stepper">
-      <li
-        v-for="(step, index) in STEPS"
-        :key="step.id"
-        :class="[stepState(step.id), { openable: canOpenStep(step), selected: step.view === selectedView && canOpenStep(step) }]"
-      >
-        <button type="button" :disabled="!canOpenStep(step)" @click="openStep(step)">
-          <span class="num">{{ doneSteps.includes(step.id) ? '✓' : index + 1 }}</span>
-          <span class="lbl">{{ step.label }}</span>
+    <div class="workspace">
+      <nav class="nav" aria-label="Optimize sections">
+        <p class="nav-label">Pipeline</p>
+        <button
+          v-for="step in navItems"
+          :key="step.id"
+          type="button"
+          class="nav-link"
+          :class="[stepState(step.id), { active: selectedView === step.view }]"
+          :disabled="!canOpenStep(step) && stepState(step.id) !== 'current'"
+          @click="openStep(step)"
+        >
+          <span class="nav-name">{{ step.label }}</span>
+          <span class="nav-count">{{ stepSummary(step) }}</span>
         </button>
-      </li>
-    </ol>
+      </nav>
 
-    <section class="pane">
-      <div class="pane-head">
-        <div>
-          <h2>{{ viewMeta.title }}</h2>
-          <p v-if="selectedView === 'tests' && phase === 'select'">
-            {{ selectedIds.length }} of {{ viewMeta.count }} selected · check a box to include it
-          </p>
-          <p v-else>{{ viewMeta.count }} item{{ viewMeta.count === 1 ? '' : 's' }} · click a row for details</p>
-        </div>
-        <div v-if="selectedView === 'tests' && phase === 'select'" class="head-actions">
-          <button type="button" class="btn ghost" @click="allSelected ? selectNone() : selectAll()">
-            {{ allSelected ? 'Clear all' : 'Select all' }}
-          </button>
-          <button type="button" class="btn primary" :disabled="!selectedIds.length" @click="continueAfterReview">
-            Run {{ selectedIds.length || 0 }} selected
-          </button>
-        </div>
-      </div>
-
-      <div class="rows">
-        <template v-if="selectedView === 'calls' || selectedView === 'evaluate'">
-          <button v-for="call in calls" :key="call.id" type="button" class="row" @click="openModal(selectedView, call)">
-            <div class="main">
-              <strong>{{ call.summary || 'No summary' }}</strong>
-              <span>{{ formatDate(call.created_at_ghl) }} · {{ call.duration_s || 0 }}s</span>
-            </div>
-            <span class="badge" :class="call.kind">{{ call.kind || 'call' }}</span>
-          </button>
-        </template>
-
-        <template v-else-if="selectedView === 'rubric'">
-          <button v-for="item in criteria" :key="item.id" type="button" class="row" @click="openModal('rubric', item)">
-            <div class="main">
-              <strong>{{ formatKey(item.key) }}</strong>
-              <span>{{ item.category }} · {{ item.checkType || item.check_type }}</span>
-            </div>
-            <span class="badge" :class="`sev-${item.severity}`">
-              {{ item.severity === 3 ? 'Critical' : item.severity === 2 ? 'Important' : 'Polish' }}
-            </span>
-          </button>
-        </template>
-
-        <template v-else-if="selectedView === 'patterns'">
-          <button v-for="pattern in patterns" :key="pattern.id" type="button" class="row" @click="openModal('patterns', pattern)">
-            <div class="main">
-              <strong>{{ formatKey(pattern.title) }}</strong>
-              <span>{{ pattern.fail_count || pattern.failCount || 0 }} failing calls</span>
-            </div>
-            <span class="badge">{{ Number(pattern.impact_score || pattern.impactScore || 0).toFixed(1) }} impact</span>
-          </button>
-        </template>
-
-        <template v-else-if="selectedView === 'tests'">
-          <div
-            v-for="test in testCases"
-            :key="test.id"
-            class="row"
-            :class="{ picked: isSelected(test.id) }"
-          >
-            <label v-if="phase === 'select'" class="check" @click.stop>
-              <input type="checkbox" :checked="isSelected(test.id)" @change="toggleSelect(test.id)" />
-            </label>
-            <button type="button" class="row-hit" @click="openModal('tests', test)">
-              <div class="main">
-                <strong>{{ test.title || 'Untitled test' }}</strong>
-                <span>{{ test.kind === 'edge_case' ? 'Edge case' : 'Happy path' }}</span>
-              </div>
-              <span class="badge">{{ canEditTests ? 'Edit' : 'View' }}</span>
+      <section class="content">
+        <div class="content-head">
+          <div>
+            <h2>{{ navItems.find((item) => item.view === selectedView)?.label }}</h2>
+            <p>{{ currentHint || stepSummary(navItems.find((item) => item.view === selectedView) || STEPS[1]) }}</p>
+          </div>
+          <div v-if="selectedView === 'tests' && phase === 'select'" class="head-actions">
+            <button type="button" class="btn ghost" @click="allSelected ? selectNone() : selectAll()">
+              {{ allSelected ? 'Clear all' : 'Select all' }}
+            </button>
+            <button type="button" class="btn primary" :disabled="!selectedIds.length" @click="continueAfterReview">
+              Run {{ selectedIds.length || 0 }} selected
             </button>
           </div>
-        </template>
+        </div>
 
-        <template v-else-if="selectedView === 'run'">
-          <button v-for="result in runResults" :key="result.id || result.test_case_id" type="button" class="row" @click="openModal('run', result)">
-            <div class="main">
-              <strong>{{ result.test_case_title || result.title || 'Test result' }}</strong>
-              <span>Attempt {{ result.attempt || 1 }}</span>
+        <div v-if="selectedView === 'run'" class="metrics">
+          <article>
+            <strong>{{ runMetrics.total }}</strong>
+            <span>Tests</span>
+          </article>
+          <article>
+            <strong class="ok">{{ runMetrics.passed }}</strong>
+            <span>Passed</span>
+          </article>
+          <article>
+            <strong class="bad">{{ runMetrics.failed }}</strong>
+            <span>Failed</span>
+          </article>
+          <article>
+            <strong>{{ runMetrics.passRate }}%</strong>
+            <span>Pass rate</span>
+          </article>
+          <article v-if="runDuration()">
+            <strong>{{ runDuration() }}</strong>
+            <span>Duration</span>
+          </article>
+        </div>
+
+        <div class="rows">
+          <template v-if="selectedView === 'calls' || selectedView === 'evaluate'">
+            <button v-for="call in calls" :key="call.id" type="button" class="row" @click="openModal(selectedView, call)">
+              <div class="main">
+                <strong>{{ call.summary || 'No summary' }}</strong>
+                <span>{{ formatDate(call.created_at_ghl) }} · {{ call.duration_s || 0 }}s</span>
+              </div>
+              <span class="badge" :class="call.kind">{{ call.kind || 'call' }}</span>
+            </button>
+            <p v-if="!calls.length" class="empty">No calls yet.</p>
+          </template>
+
+          <template v-else-if="selectedView === 'rubric'">
+            <button v-for="item in criteria" :key="item.id" type="button" class="row" @click="openModal('rubric', item)">
+              <div class="main">
+                <strong>{{ formatKey(item.key) }}</strong>
+                <span>{{ item.category }} · {{ item.checkType || item.check_type }}</span>
+              </div>
+              <span class="badge" :class="`sev-${item.severity}`">
+                {{ item.severity === 3 ? 'Critical' : item.severity === 2 ? 'Important' : 'Polish' }}
+              </span>
+            </button>
+            <p v-if="!criteria.length" class="empty">No rubric yet.</p>
+          </template>
+
+          <template v-else-if="selectedView === 'patterns'">
+            <button v-for="pattern in patterns" :key="pattern.id" type="button" class="row" @click="openModal('patterns', pattern)">
+              <div class="main">
+                <strong>{{ formatKey(pattern.title) }}</strong>
+                <span>{{ pattern.fail_count || pattern.failCount || 0 }} failing calls</span>
+              </div>
+              <span class="badge">{{ Number(pattern.impact_score || pattern.impactScore || 0).toFixed(1) }} impact</span>
+            </button>
+            <p v-if="!patterns.length" class="empty">No issues yet.</p>
+          </template>
+
+          <template v-else-if="selectedView === 'tests'">
+            <div v-for="test in testCases" :key="test.id" class="row" :class="{ picked: isSelected(test.id) }">
+              <label v-if="phase === 'select'" class="check" @click.stop>
+                <input type="checkbox" :checked="isSelected(test.id)" @change="toggleSelect(test.id)" />
+              </label>
+              <button type="button" class="row-hit" @click="openModal('tests', test)">
+                <div class="main">
+                  <strong>{{ test.title || 'Untitled test' }}</strong>
+                  <span>{{ test.kind === 'edge_case' ? 'Edge case' : 'Happy path' }}</span>
+                </div>
+                <span class="badge">{{ canEditTests ? 'Edit' : 'View' }}</span>
+              </button>
             </div>
-            <span class="badge" :class="result.passed ? 'pass' : 'fail'">{{ result.passed ? 'Passed' : 'Failed' }}</span>
-          </button>
-        </template>
+            <p v-if="!testCases.length" class="empty">No tests yet.</p>
+          </template>
 
-        <template v-else>
-          <button v-for="rec in recommendations" :key="rec.id" type="button" class="row" @click="openModal('recs', rec)">
-            <div class="main">
-              <strong>{{ recTitle(rec) }}</strong>
-              <span class="clamp">{{ recBody(rec) }}</span>
-            </div>
-            <span class="badge">{{ rec.tier || rec.status || 'proposed' }}</span>
-          </button>
-        </template>
+          <template v-else-if="selectedView === 'run'">
+            <button v-for="result in runResults" :key="result.id || result.test_case_id" type="button" class="row" @click="openModal('run', result)">
+              <div class="main">
+                <strong>{{ result.test_case_title || result.title || 'Test result' }}</strong>
+                <span>Attempt {{ result.attempt || 1 }}</span>
+              </div>
+              <span class="badge" :class="result.passed ? 'pass' : 'fail'">{{ result.passed ? 'Passed' : 'Failed' }}</span>
+            </button>
+            <p v-if="!runResults.length" class="empty">No results yet.</p>
+          </template>
 
-        <p v-if="!viewMeta.count" class="empty">{{ viewMeta.empty }}</p>
-      </div>
-    </section>
+          <template v-else>
+            <button v-for="rec in recommendations" :key="rec.id" type="button" class="row" @click="openModal('recs', rec)">
+              <div class="main">
+                <strong>{{ recTitle(rec) }}</strong>
+                <span class="clamp">{{ recBody(rec) }}</span>
+              </div>
+              <span class="badge">{{ rec.tier || rec.status || 'proposed' }}</span>
+            </button>
+            <p v-if="!recommendations.length" class="empty">No recommendations yet.</p>
+          </template>
+        </div>
+      </section>
+    </div>
 
     <div v-if="modalKind" class="overlay" @click.self="closeModal">
       <div class="modal" role="dialog" aria-modal="true">
@@ -639,8 +696,8 @@ onMounted(loadStatus)
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: #f8fafc;
-  color: #0f172a;
+  background: #f3f4f6;
+  color: #111827;
 }
 
 .head {
@@ -648,9 +705,9 @@ onMounted(loadStatus)
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  padding: 16px 20px 12px;
+  padding: 14px 16px;
   background: #fff;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e5e7eb;
 }
 
 .min { min-width: 0; }
@@ -659,83 +716,111 @@ h1 { margin: 2px 0 4px; font-size: 20px; }
 .version { margin: 0; color: #64748b; font-size: 12px; }
 .version.ready { color: #047857; }
 
-.progress { padding: 10px 20px 0; background: #fff; }
-.bar { height: 4px; border-radius: 99px; background: #e2e8f0; overflow: hidden; }
-.bar span { display: block; height: 100%; background: #2563eb; transition: width .25s ease; }
-.hint { margin: 8px 0 0; color: #475569; font-size: 13px; }
-
-.stepper {
-  display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  margin: 0;
-  padding: 10px 16px 12px;
-  list-style: none;
-  background: #fff;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.stepper li button {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  min-width: 64px;
-  padding: 6px 8px;
-  border: 0;
-  background: transparent;
-  color: #94a3b8;
-  cursor: default;
-}
-
-.stepper li.openable button { cursor: pointer; color: #334155; }
-.stepper li.current button { color: #1d4ed8; }
-.stepper li.done button { color: #047857; }
-.stepper li.selected button { background: #eff6ff; border-radius: 8px; }
-
-.num {
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border-radius: 99px;
-  background: #e2e8f0;
-  font-size: 11px;
-  font-weight: 700;
-}
-.current .num { background: #2563eb; color: #fff; }
-.done .num { background: #d1fae5; color: #047857; }
-.lbl { font-size: 11px; font-weight: 600; }
-
-.pane {
+.workspace {
   flex: 1;
   min-height: 0;
   display: flex;
-  flex-direction: column;
   margin: 12px 16px 16px;
   background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
   overflow: hidden;
 }
 
-.pane-head {
+.nav {
+  width: 212px;
+  flex-shrink: 0;
+  padding: 12px 8px;
+  border-right: 1px solid #e5e7eb;
+  background: #fafafa;
+}
+
+.nav-label {
+  margin: 0 8px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: #9ca3af;
+}
+
+.nav-link {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.head-actions {
-  display: flex;
-  align-items: center;
   gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0 6px 6px 0;
+  background: transparent;
+  color: #4b5563;
+  text-align: left;
+  cursor: pointer;
 }
 
-.pane-head h2 { margin: 0; font-size: 15px; }
-.pane-head p { margin: 2px 0 0; color: #64748b; font-size: 12px; }
+.nav-link:hover:not(:disabled) {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.nav-link.active {
+  background: #fff;
+  border-left-color: #2563eb;
+  color: #2563eb;
+  box-shadow: inset -1px 0 0 #fff;
+}
+
+.nav-link.current:not(.active) { color: #2563eb; }
+.nav-link.todo { color: #9ca3af; }
+.nav-link:disabled { cursor: default; }
+
+.nav-name { font-size: 13px; font-weight: 600; }
+.nav-count { font-size: 11px; color: #9ca3af; font-weight: 500; max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-link.active .nav-count { color: #60a5fa; }
+
+.content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+}
+
+.content-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.content-head h2 { margin: 0; font-size: 16px; }
+.content-head p { margin: 4px 0 0; color: #6b7280; font-size: 12px; }
+.head-actions { display: flex; gap: 8px; }
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #f3f4f6;
+  background: #fafafa;
+}
+
+.metrics article {
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.metrics strong { display: block; font-size: 18px; line-height: 1.2; }
+.metrics span { color: #6b7280; font-size: 11px; }
+.metrics .ok { color: #15803d; }
+.metrics .bad { color: #b91c1c; }
 
 .rows { flex: 1; min-height: 0; overflow: auto; }
 

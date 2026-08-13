@@ -24,6 +24,7 @@ vi.mock('../../../src/services/testGenerationService.js', () => ({
 }));
 vi.mock('../../../src/services/testRunnerService.js', () => ({
   runTests: vi.fn(),
+  getTestResults: vi.fn(),
 }));
 vi.mock('../../../src/recommend/index.js', () => ({
   generateRecommendations: vi.fn(),
@@ -33,7 +34,7 @@ import db from '../../../src/db/connection.js';
 import { syncAgentCalls, getAgentCalls } from '../../../src/services/callSyncService.js';
 import { generateRubricForAgentVersion, getRubricByAgentVersion } from '../../../src/services/rubricEvaluationService.js';
 import { getTestCases } from '../../../src/services/testGenerationService.js';
-import { runTests } from '../../../src/services/testRunnerService.js';
+import { runTests, getTestResults } from '../../../src/services/testRunnerService.js';
 import { runOptimizeStep, getOptimizeStatus } from '../../../src/services/optimizePipelineService.js';
 
 describe('optimizePipelineService', () => {
@@ -92,6 +93,7 @@ describe('optimizePipelineService', () => {
     getAgentCalls.mockResolvedValueOnce([{ id: 'c1' }]);
     getTestCases.mockResolvedValueOnce([{ id: 't1', title: 'Book' }]);
     getRubricByAgentVersion.mockResolvedValueOnce({ id: 'rub-1', criteria: [] });
+    getTestResults.mockResolvedValueOnce([{ id: 'res-1', passed: true }]);
 
     const status = await getOptimizeStatus('a1');
     expect(status.optimized).toBe(true);
@@ -99,6 +101,7 @@ describe('optimizePipelineService', () => {
     expect(status.recommendations).toHaveLength(1);
     expect(status.calls).toHaveLength(1);
     expect(status.testCases).toHaveLength(1);
+    expect(status.lastRunMetrics.passed).toBe(1);
   });
 
   it('returns stored calls when location is missing', async () => {
