@@ -355,6 +355,11 @@
     style.textContent = [
       '#' + CONFIG.tabId + '-track{',
       '  display:none;position:fixed;pointer-events:none;z-index:10048;',
+      '  overflow:hidden;',
+      '  border-top-left-radius:0 !important;',
+      '  border-bottom-left-radius:0 !important;',
+      '  border-top-right-radius:0.5rem !important;',
+      '  border-bottom-right-radius:0.5rem !important;',
       '}',
       '#' + CONFIG.tabId + '-track[data-ao-ready="true"]{display:block;}',
       'body.ao-tabs-ready [data-testid="builder-tab-switch"]{',
@@ -370,8 +375,9 @@
       '  color:#374151 !important;',
       '}',
       'body.ao-optimize-on [data-testid="builder-tab-switch"] [class*="indicator"],',
-      'body.ao-optimize-on [data-testid="builder-tab-switch"] [class*="active-pill"]{',
-      '  opacity:0 !important;',
+      'body.ao-optimize-on [data-testid="builder-tab-switch"] [class*="active-pill"],',
+      'body.ao-optimize-on .builder-tab-switch__indicator{',
+      '  opacity:0 !important;visibility:hidden !important;',
       '}',
       '#' + CONFIG.tabId + '{',
       '  display:none;box-sizing:border-box;pointer-events:auto !important;cursor:pointer;',
@@ -464,13 +470,16 @@
       var cs = window.getComputedStyle(ref);
       var swCs = window.getComputedStyle(sw);
       var tabWidth = Math.max(Math.round(refBox.width), 88);
-      var padRight = Math.max(0, Math.round(switchBox.right - refBox.right));
-      var left = Math.round(refBox.right);
+      // Native switch is rounded-lg + p-1. After we square its right edge,
+      // that 4px inset becomes the gap before Optimize. Our track continues
+      // the gray capsule and applies the same 0.5rem radius on the RIGHT only.
+      var padRight = Math.max(4, Math.round(switchBox.right - refBox.right));
+      var tabLeft = Math.round(switchBox.right);
       tab.style.top = Math.round(refBox.top) + 'px';
-      tab.style.left = left + 'px';
+      tab.style.left = tabLeft + 'px';
       tab.style.height = Math.round(refBox.height) + 'px';
       tab.style.width = tabWidth + 'px';
-      tab.style.padding = cs.padding || '0 14px';
+      tab.style.padding = cs.padding || '0 16px';
       tab.style.fontSize = cs.fontSize || '14px';
       tab.style.fontWeight = cs.fontWeight || '500';
       tab.style.borderRadius = cs.borderRadius || '6px';
@@ -481,7 +490,10 @@
       track.style.height = Math.round(switchBox.height) + 'px';
       track.style.width = Math.round(tabWidth + padRight + 1) + 'px';
       track.style.background = swCs.backgroundColor || '#dde0e6';
-      track.style.borderRadius = '0 ' + (swCs.borderTopRightRadius || '8px') + ' ' + (swCs.borderBottomRightRadius || '8px') + ' 0';
+      track.style.borderTopLeftRadius = '0';
+      track.style.borderBottomLeftRadius = '0';
+      track.style.borderTopRightRadius = '0.5rem';
+      track.style.borderBottomRightRadius = '0.5rem';
       track.setAttribute('data-ao-ready', tab.getAttribute('data-ao-ready') || 'false');
       styleOptimizeTab(tab, state.active);
       return;
