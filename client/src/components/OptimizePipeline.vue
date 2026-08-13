@@ -246,6 +246,7 @@ onMounted(loadStatus)
           <button type="button" class="icon" @click="closeModal">×</button>
         </header>
 
+        <div class="modal-body">
         <div v-if="modalKind === 'tests'" class="form">
           <label>Title<input v-model="draft.title" type="text" /></label>
           <label>Scenario<textarea v-model="draft.scenario" rows="4" /></label>
@@ -310,6 +311,7 @@ onMounted(loadStatus)
           <p>{{ recBody(modalItem) }}</p>
           <p class="meta">{{ modalItem.tier }} · {{ modalItem.status || 'proposed' }}</p>
           <pre v-if="modalItem.payload && !modalItem.payload.diff">{{ JSON.stringify(modalItem.payload, null, 2) }}</pre>
+        </div>
         </div>
       </div>
     </div>
@@ -612,15 +614,28 @@ h1 { margin: 2px 0 4px; font-size: 20px; }
   background: rgba(15, 23, 42, .4);
 }
 .modal {
+  display: flex;
+  flex-direction: column;
   width: min(640px, 100%);
   max-height: min(82vh, 720px);
-  overflow: auto;
+  overflow: hidden;
   background: #fff;
   border-radius: 14px;
+}
+.modal header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fff;
+}
+.modal h3 { margin: 0; font-size: 16px; }
+.modal-body {
+  overflow: auto;
   padding: 16px 18px 18px;
 }
-.modal header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.modal h3 { margin: 0; font-size: 16px; }
 .icon { width: 32px; height: 32px; border: 0; background: transparent; font-size: 22px; cursor: pointer; }
 
 .form, .detail { display: flex; flex-direction: column; gap: 10px; }
@@ -636,7 +651,7 @@ input, textarea, pre {
 }
 pre { font-size: 12px; background: #f8fafc; overflow: auto; }
 .split { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.actions { display: flex; gap: 8px; }
+.actions { display: flex; justify-content: flex-end; gap: 8px; }
 .lead { margin: 0; font-weight: 700; }
 .body, .detail p { margin: 0; color: #334155; font-size: 14px; line-height: 1.5; }
 .meta { color: #64748b !important; font-size: 12px !important; }
