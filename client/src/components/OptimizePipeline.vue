@@ -164,7 +164,7 @@ onMounted(loadStatus)
               </div>
               <span class="badge" :class="call.kind">{{ call.kind || 'call' }}</span>
             </button>
-            <p v-if="!calls.length" class="empty">No calls yet.</p>
+            <p v-if="!calls.length" class="empty">No data</p>
           </template>
 
           <template v-else-if="selectedView === 'rubric'">
@@ -177,7 +177,7 @@ onMounted(loadStatus)
                 {{ item.severity === 3 ? 'Critical' : item.severity === 2 ? 'Important' : 'Polish' }}
               </span>
             </button>
-            <p v-if="!criteria.length" class="empty">No rubric yet.</p>
+            <p v-if="!criteria.length" class="empty">No data</p>
           </template>
 
           <template v-else-if="selectedView === 'patterns'">
@@ -188,7 +188,7 @@ onMounted(loadStatus)
               </div>
               <span class="badge">{{ Number(pattern.impact_score || pattern.impactScore || 0).toFixed(1) }} impact</span>
             </button>
-            <p v-if="!patterns.length" class="empty">No issues yet.</p>
+            <p v-if="!patterns.length" class="empty">No data</p>
           </template>
 
           <template v-else-if="selectedView === 'tests'">
@@ -204,7 +204,7 @@ onMounted(loadStatus)
                 <span class="badge">{{ canEditTests ? 'Edit' : 'View' }}</span>
               </button>
             </div>
-            <p v-if="!testCases.length" class="empty">No tests yet.</p>
+            <p v-if="!testCases.length" class="empty">No data</p>
           </template>
 
           <template v-else-if="selectedView === 'run'">
@@ -215,7 +215,7 @@ onMounted(loadStatus)
               </div>
               <span class="badge" :class="result.passed ? 'pass' : 'fail'">{{ result.passed ? 'Passed' : 'Failed' }}</span>
             </button>
-            <p v-if="!runResults.length" class="empty">No results yet.</p>
+            <p v-if="!runResults.length" class="empty">No data</p>
           </template>
 
           <template v-else>
@@ -226,7 +226,7 @@ onMounted(loadStatus)
               </div>
               <span class="badge">{{ rec.tier || rec.status || 'proposed' }}</span>
             </button>
-            <p v-if="!recommendations.length" class="empty">No recommendations yet.</p>
+            <p v-if="!recommendations.length" class="empty">No data</p>
           </template>
         </div>
       </section>
@@ -586,7 +586,17 @@ h1 { margin: 2px 0 4px; font-size: 20px; }
 .badge.sev-3 { background: #fee2e2; color: #991b1b; }
 .badge.sev-2 { background: #fef3c7; color: #92400e; }
 
-.empty { margin: 0; padding: 36px 16px; text-align: center; color: #64748b; font-size: 13px; }
+.empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 16px;
+  text-align: center;
+  color: #64748b;
+  font-size: 13px;
+}
 .toast, .banner { margin: 0; padding: 8px 16px 12px; font-size: 13px; }
 .toast { color: #1d4ed8; }
 .banner { color: #991b1b; }

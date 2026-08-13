@@ -148,6 +148,7 @@ describe('OptimizePipeline flow', () => {
     expect(pipeline.phase.value).toBe('idle')
     expect(pipeline.progressPercent.value).toBe(0)
     expect(pipeline.progressLabel.value).toBe('0%')
+    expect(pipeline.stepSummary(pipeline.navItems.value[0])).toBe('No data')
     await pipeline.startOptimize()
     expect(pipeline.phase.value).toBe('error')
     expect(pipeline.error.value).toMatch(/Missing agent or location/)
@@ -213,7 +214,7 @@ describe('OptimizePipeline flow', () => {
     await pipeline.startOptimize()
     expect(pipeline.phase.value).toBe('blocked')
     expect(pipeline.selectedView.value).toBe('calls')
-    expect(pipeline.progressLabel.value).toMatch(/waiting on calls/)
+    expect(pipeline.progressLabel.value).toMatch(/no data/)
     expect(pipeline.testCases.value).toEqual([])
   })
 

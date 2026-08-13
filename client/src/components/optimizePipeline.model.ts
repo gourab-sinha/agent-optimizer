@@ -112,7 +112,7 @@ export function useOptimizePipeline(props: OptimizePipelineProps, fetchImpl: typ
     }
     if (phase.value === 'select') return `${progressPercent.value}% · choose tests to continue`
     if (phase.value === 'done' || (phase.value === 'idle' && alreadyOptimized.value)) return '100% · run complete'
-    if (phase.value === 'blocked') return `${progressPercent.value}% · waiting on calls`
+    if (phase.value === 'blocked') return `${progressPercent.value}% · no data`
     return `${progressPercent.value}%`
   })
   const selectedTests = computed(() => testCases.value.filter((item) => selectedIds.value.includes(item.id)))
@@ -150,7 +150,7 @@ export function useOptimizePipeline(props: OptimizePipelineProps, fetchImpl: typ
   function stepSummary(step: StepDef) {
     const state = stepState(step.id)
     if (state === 'current' && (phase.value === 'running' || phase.value === 'finishing')) return currentHint.value || 'Working…'
-    if (state === 'todo') return 'Waiting'
+    if (state === 'todo') return 'No data'
     if (step.id === 'sync_agent') return 'Agent synced'
     if (step.view === 'tests' && phase.value === 'select') {
       return `${selectedIds.value.length} of ${testCases.value.length} selected`
@@ -159,7 +159,7 @@ export function useOptimizePipeline(props: OptimizePipelineProps, fetchImpl: typ
       return `${passedCount.value} passed · ${runResults.value.length - passedCount.value} failed`
     }
     const count = stepCount(step)
-    if (!count) return state === 'done' ? 'Done' : 'Waiting'
+    if (!count) return state === 'done' ? 'Done' : 'No data'
     const noun = step.view === 'calls' || step.view === 'evaluate' ? 'calls'
       : step.view === 'rubric' ? 'criteria'
       : step.view === 'patterns' ? 'issues'
